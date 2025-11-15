@@ -1,3 +1,4 @@
+use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -7,14 +8,29 @@ pub enum Namespace {
     Temp,
     Variable,
     Context,
+    Query,
 }
 
 impl Namespace {
+    fn split_parts(parts: &[String]) -> (Self, Vec<String>) {
+        let mut iter = parts.iter();
+        let first = iter.next().cloned().unwrap_or_default();
+        if let Some(ns) = Namespace::from_prefix(&first) {
+            (ns, iter.cloned().collect())
+        } else {
+            (
+                Namespace::Variable,
+                std::iter::once(first).chain(iter.cloned()).collect(),
+            )
+        }
+    }
+
     fn from_prefix(segment: &str) -> Option<Self> {
         match segment.to_ascii_lowercase().as_str() {
             "temp" | "t" => Some(Namespace::Temp),
             "variable" | "var" | "v" => Some(Namespace::Variable),
             "context" | "c" => Some(Namespace::Context),
+            "query" | "q" => Some(Namespace::Query),
             _ => None,
         }
     }
@@ -24,6 +40,7 @@ impl Namespace {
             Namespace::Temp => "temp",
             Namespace::Variable => "variable",
             Namespace::Context => "context",
+            Namespace::Query => "query",
         }
     }
 }
@@ -42,6 +59,10 @@ pub struct QualifiedName {
 }
 
 impl QualifiedName {
+    pub fn new(namespace: Namespace, key: String) -> Self {
+        Self { namespace, key }
+    }
+
     pub fn from_parts(parts: &[String]) -> Self {
         let mut iter = parts.iter();
         let first = iter.next().cloned().unwrap_or_default();
@@ -74,6 +95,14 @@ impl QualifiedName {
     pub fn key(&self) -> &str {
         &self.key
     }
+
+    pub fn segments(&self) -> Vec<String> {
+        if self.key.is_empty() {
+            Vec::new()
+        } else {
+            self.key.split('.').map(|s| s.to_string()).collect()
+        }
+    }
 }
 
 impl fmt::Display for QualifiedName {
@@ -88,6 +117,7 @@ pub enum Value {
     Number(f64),
     String(String),
     Array(Vec<Value>),
+    Struct(IndexMap<String, Value>),
     Null,
 }
 
@@ -108,7 +138,7 @@ impl Value {
     pub fn as_number(&self) -> f64 {
         match self {
             Value::Number(value) => *value,
-            Value::String(_) | Value::Null => 0.0,
+            Value::String(_) | Value::Null | Value::Struct(_) => 0.0,
             Value::Array(values) => values.len() as f64,
         }
     }
@@ -118,7 +148,22 @@ impl Value {
             Value::Number(value) => *value != 0.0,
             Value::String(text) => !text.is_empty(),
             Value::Array(values) => !values.is_empty(),
+            Value::Struct(map) => !map.is_empty(),
             Value::Null => false,
+        }
+    }
+
+    pub fn as_array(&self) -> Option<&[Value]> {
+        match self {
+            Value::Array(values) => Some(values),
+            _ => None,
+        }
+    }
+
+    pub fn as_struct(&self) -> Option<&IndexMap<String, Value>> {
+        match self {
+            Value::Struct(map) => Some(map),
+            _ => None,
         }
     }
 }
@@ -154,23 +199,129 @@ impl RuntimeContext {
 
     /// Convenience setter for string path segments.
     pub fn set_value_for_path(&mut self, parts: &[String], value: Value) {
-        let name = QualifiedName::from_parts(parts);
-        self.set_value_with_name(name, value);
+        let (namespace, raw_segments) = Namespace::split_parts(parts);
+        if namespace == Namespace::Query {
+            return;
+        }
+        let segments: Vec<String> = raw_segments
+            .into_iter()
+            .map(|segment| segment.to_ascii_lowercase())
+            .collect();
+        if segments.is_empty() {
+            return;
+        }
+        self.assign_nested(namespace, &segments, value);
     }
 
     pub fn set_number_for_path(&mut self, parts: &[String], value: f64) {
         self.set_value_for_path(parts, Value::number(value));
     }
 
-    pub fn get_value(&self, name: &QualifiedName) -> Option<&Value> {
-        self.values.get(name)
-    }
-
     pub fn get_number(&self, name: &QualifiedName) -> Option<f64> {
-        self.get_value(name).map(Value::as_number)
+        self.lookup_namespace_path(name.namespace.clone(), &name.segments())
+            .map(|value| value.as_number())
     }
 
     pub fn get_or_default_number(&self, name: &QualifiedName) -> f64 {
         self.get_number(name).unwrap_or(0.0)
+    }
+
+    pub fn get_value_for_path(&self, parts: &[String]) -> Option<Value> {
+        let (namespace, raw_segments) = Namespace::split_parts(parts);
+        let segments: Vec<String> = raw_segments
+            .into_iter()
+            .map(|segment| segment.to_ascii_lowercase())
+            .collect();
+        self.lookup_namespace_path(namespace, &segments)
+    }
+
+    pub fn with_query(mut self, name: impl Into<String>, value: f64) -> Self {
+        self.set_query_value(name, value);
+        self
+    }
+
+    pub fn set_query_value(&mut self, name: impl Into<String>, value: f64) {
+        let key = name.into().to_ascii_lowercase();
+        self.values.insert(
+            QualifiedName {
+                namespace: Namespace::Query,
+                key,
+            },
+            Value::number(value),
+        );
+    }
+
+    fn assign_nested(&mut self, namespace: Namespace, segments: &[String], value: Value) {
+        let key = segments.join(".");
+        let mut current = value;
+        self.values
+            .insert(QualifiedName::new(namespace.clone(), key), current.clone());
+
+        for depth in (1..segments.len()).rev() {
+            let parent_key = segments[..depth].join(".");
+            let field = segments[depth].clone();
+            let existing = self
+                .values
+                .get(&QualifiedName::new(namespace.clone(), parent_key.clone()))
+                .cloned();
+            let mut map = match existing {
+                Some(Value::Struct(map)) => map,
+                _ => IndexMap::new(),
+            };
+            map.insert(field, current.clone());
+            current = Value::Struct(map.clone());
+            self.values.insert(
+                QualifiedName::new(namespace.clone(), parent_key),
+                Value::Struct(map),
+            );
+        }
+    }
+
+    fn lookup_namespace_path(&self, namespace: Namespace, segments: &[String]) -> Option<Value> {
+        let key = segments.join(".");
+        if let Some(value) = self
+            .values
+            .get(&QualifiedName::new(namespace.clone(), key.clone()))
+        {
+            return Some(value.clone());
+        }
+
+        for depth in (1..=segments.len()).rev() {
+            let prefix = segments[..depth].join(".");
+            if let Some(value) = self
+                .values
+                .get(&QualifiedName::new(namespace.clone(), prefix.clone()))
+            {
+                if depth == segments.len() {
+                    return Some(value.clone());
+                }
+                if let Some(found) = lookup_nested_value(value, &segments[depth..]) {
+                    return Some(found);
+                }
+            }
+        }
+
+        None
+    }
+}
+
+fn lookup_nested_value(value: &Value, tail: &[String]) -> Option<Value> {
+    if tail.is_empty() {
+        return Some(value.clone());
+    }
+    match value {
+        Value::Struct(map) => {
+            let key = &tail[0];
+            map.get(key)
+                .and_then(|child| lookup_nested_value(child, &tail[1..]))
+        }
+        Value::Array(values) => {
+            if tail.len() == 1 && tail[0] == "length" {
+                Some(Value::number(values.len() as f64))
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }

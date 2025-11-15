@@ -1,6 +1,7 @@
 use crate::ast::{BinaryOp, ControlFlowExpr, Expr, Program, Statement};
 use crate::eval::{QualifiedName, RuntimeContext, Value};
 use crate::ir::BuiltinFunction;
+use indexmap::IndexMap;
 use thiserror::Error;
 
 const MAX_LOOP_ITERATIONS: usize = 1024;
@@ -149,13 +150,10 @@ impl Executor {
     ) -> Result<(Value, ControlSignal), ExecError> {
         match expr {
             Expr::Number(value) => Ok((Value::number(*value), ControlSignal::None)),
-            Expr::Path(parts) => {
-                let name = QualifiedName::from_parts(parts);
-                Ok((
-                    ctx.get_value(&name).cloned().unwrap_or(Value::Null),
-                    ControlSignal::None,
-                ))
-            }
+            Expr::Path(parts) => Ok((
+                ctx.get_value_for_path(parts).unwrap_or(Value::Null),
+                ControlSignal::None,
+            )),
             Expr::Unary { op, expr } => {
                 let (value, signal) = self.eval_expr(expr, ctx)?;
                 if !matches!(signal, ControlSignal::None) {
@@ -203,6 +201,35 @@ impl Executor {
                     evaluated.push(result);
                 }
                 Ok((Value::array(evaluated), ControlSignal::None))
+            }
+            Expr::Struct(fields) => {
+                let mut map = IndexMap::new();
+                for (key, expr) in fields {
+                    let (value, signal) = self.eval_expr(expr, ctx)?;
+                    if !matches!(signal, ControlSignal::None) {
+                        return Ok((value, signal));
+                    }
+                    map.insert(key.to_ascii_lowercase(), value);
+                }
+                Ok((Value::Struct(map), ControlSignal::None))
+            }
+            Expr::Index { target, index } => {
+                let (collection, signal) = self.eval_expr(target, ctx)?;
+                if !matches!(signal, ControlSignal::None) {
+                    return Ok((collection, signal));
+                }
+                let (idx_value, signal) = self.eval_expr(index, ctx)?;
+                if !matches!(signal, ControlSignal::None) {
+                    return Ok((idx_value, signal));
+                }
+                let result = match collection {
+                    Value::Array(values) => {
+                        let idx = normalize_index(idx_value.as_number(), values.len());
+                        values.get(idx).cloned().unwrap_or(Value::Null)
+                    }
+                    _ => Value::Null,
+                };
+                Ok((result, ControlSignal::None))
             }
             Expr::String(text) => Ok((Value::string(text), ControlSignal::None)),
         }
@@ -340,6 +367,21 @@ fn clamp_loop_count(value: f64) -> usize {
         0
     } else {
         value.floor().min(MAX_LOOP_ITERATIONS as f64).max(0.0) as usize
+    }
+}
+
+fn normalize_index(index: f64, len: usize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    if index.is_nan() {
+        return 0;
+    }
+    let idx = index.floor() as i64;
+    if idx < 0 {
+        0
+    } else {
+        (idx as usize) % len
     }
 }
 

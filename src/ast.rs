@@ -1,3 +1,5 @@
+use indexmap::IndexMap;
+
 /// Full Molang program consisting of one or more statements.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
@@ -33,6 +35,7 @@ pub enum Expr {
     Path(Vec<String>),
     String(String),
     Array(Vec<Expr>),
+    Struct(IndexMap<String, Expr>),
     Unary {
         op: UnaryOp,
         expr: Box<Expr>,
@@ -52,6 +55,10 @@ pub enum Expr {
         args: Vec<Expr>,
     },
     Flow(ControlFlowExpr),
+    Index {
+        target: Box<Expr>,
+        index: Box<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,7 +110,11 @@ impl Expr {
     /// interpreter must honor (e.g., `break`, `continue`).
     pub fn contains_flow(&self) -> bool {
         match self {
-            Expr::Number(_) | Expr::Path(_) | Expr::String(_) | Expr::Array(_) => false,
+            Expr::Number(_)
+            | Expr::Path(_)
+            | Expr::String(_)
+            | Expr::Array(_)
+            | Expr::Struct(_) => false,
             Expr::Unary { expr, .. } => expr.contains_flow(),
             Expr::Binary { left, right, .. } => left.contains_flow() || right.contains_flow(),
             Expr::Conditional {
@@ -121,6 +132,7 @@ impl Expr {
             Expr::Call { target, args } => {
                 target.contains_flow() || args.iter().any(|expr| expr.contains_flow())
             }
+            Expr::Index { target, index } => target.contains_flow() || index.contains_flow(),
             Expr::Flow(_) => true,
         }
     }
@@ -148,7 +160,11 @@ impl Expr {
             Expr::Call { target, args } => {
                 target.is_jit_compatible() && args.iter().all(|expr| expr.is_jit_compatible())
             }
-            Expr::String(_) | Expr::Array(_) | Expr::Flow(_) => false,
+            Expr::String(_)
+            | Expr::Array(_)
+            | Expr::Struct(_)
+            | Expr::Index { .. }
+            | Expr::Flow(_) => false,
         }
     }
 }

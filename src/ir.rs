@@ -129,7 +129,9 @@ impl IrBuilder {
         match expr {
             Expr::Number(value) => Ok(IrExpr::Constant(*value)),
             Expr::Path(parts) => Ok(IrExpr::Path(parts.clone())),
-            Expr::String(_) | Expr::Array(_) => Err(LowerError::UnsupportedLiteral),
+            Expr::String(_) | Expr::Array(_) | Expr::Struct(_) | Expr::Index { .. } => {
+                Err(LowerError::UnsupportedLiteral)
+            }
             Expr::Unary { op, expr } => Ok(IrExpr::Unary {
                 op: *op,
                 expr: Box::new(self.lower_expr(expr)?),

@@ -10,19 +10,21 @@
 ## Supported Features
 
 - Expressions: numeric ops, precedence, `?:`, `??`, logical `&&/||/!`, unary +/-.
-- Literals: numbers, quoted strings, array literals `[a, b, c]`.
-- Namespaces: `t.`, `temp.`, `v.`, `variable.`, `context.` with dot-path segments.
+- Literals: numbers, quoted strings, array literals `[a, b, c]`, struct literals `{ x: 1, y: 2 }`.
+- Namespaces: `t.`, `temp.`, `v.`, `variable.`, `context.`, `query.` with dot-path segments.
 - Statements: brace-delimited blocks, semicolon-separated statements, assignments, `loop(count, expr_or_block)`, `for_each(var, collection, expr_or_block)`, `break`, `continue`, `return`.
+- Struct members are built automatically: assigning `temp.location.z = 3` populates `temp.location` as a nested struct. Array literals support indexing (`temp.values[i]`) and `.length`.
 - Builtins: `math.*` functions listed above callable from both interpreter and JIT paths.
+- Query namespace: bind dynamic values with `RuntimeContext::with_query("speed", 2.5)` and read `query.speed` inside Molang.
 - JIT caching: repeated pure expressions re-use compiled code keyed by source string.
 
 ## Unsupported / Not Yet Implemented
 
 - Minecraft-specific systems (textures, geometry, queries beyond math namespace).
 - Arrow (`->`) operator and entity references.
-- Struct literals, query APIs, experimental operators not covered in math subset.
+- Experimental operators not covered in the public Molang math/documented subset.
 - Persistence of `variable.` values across executions (context resets per run).
-- Arrays beyond simple iteration (no indexing, slicing, or mutation yet).
+- Array mutation/slicing (beyond literals, indexing, and `.length`).
 
 ## Behavioral Notes & Limitations
 
@@ -32,6 +34,12 @@
 - `??` is implemented as “null-like” check; only `null` counts as missing, unlike Bedrock’s broader definition.
 
 ## Examples
+
+```molang
+temp.location = { x: 1, y: 2 };
+temp.location.z = 3;
+return temp.location.x + temp.location.y + temp.location.z;  # -> 6
+```
 
 ```molang
 temp.counter = 0;
@@ -50,6 +58,10 @@ for_each(temp.item, temp.values, {
   (temp.item >= 6) ? break;
 });
 return temp.total;        # -> 12
+
+# Array indexing + length
+temp.index = 1;
+return temp.values[temp.index] + temp.values[3] + temp.values.length;  # -> 33
 ```
 
 ```molang
@@ -57,14 +69,18 @@ return temp.total;        # -> 12
 math.clamp(math.random(0, 5), 1, 4) ?? 2
 ```
 
-Run tests locally:
+## Usage
 
 ```bash
 cargo test
+cargo run -- "return math.sqrt(16);"
 ```
 
-Build CLI and evaluate:
+In Rust you can inject query data before evaluation:
 
-```bash
-cargo run -- "return math.sqrt(16);"
+```rust
+let mut ctx = RuntimeContext::default()
+    .with_query("speed", 2.5)
+    .with_query("offset", -1.0);
+let value = evaluate_expression("query.speed + math.abs(query.offset)", &mut ctx).unwrap();
 ```

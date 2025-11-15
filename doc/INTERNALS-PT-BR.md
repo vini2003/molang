@@ -10,23 +10,23 @@
    - `jit_cache` guarda `CompiledExpression` por thread, indexado pela string original.
    - `jit::compile_expression` usa Cranelift para gerar uma função que lê slots (`f64`) do contexto: cada caminho vira um índice.
 5. **Interpretador**
-   - `Executor` percorre as declarações mutando `RuntimeContext`, que armazena `Value` (número, string, array, null) por `QualifiedName`.
+   - `Executor` percorre as declarações mutando `RuntimeContext`, que armazena `Value` (número, string, array, struct, null) por `QualifiedName`.
    - Implementa `loop` (limitado a 1024), `for_each` sobre arrays, `break`/`continue`/`return`.
-   - Expressões respeitam precedência, curto-circuito (`&&/||`), `??` (apenas `null` conta como vazio) e fazem chamadas para `BuiltinFunction::evaluate`.
+   - Expressões respeitam precedência, curto-circuito (`&&/||`), `??` (apenas `null` conta como vazio), literais de struct, indexação de arrays e `.length`, além das chamadas `BuiltinFunction::evaluate`.
 6. **Builtins**
    - `builtins.rs` provê helpers (`math.random`, `clamp`, etc.), usando `SmallRng` com mutex e funções `extern "C"` para registrar na Cranelift.
 
 ## Contexto & Valores
 
-- `RuntimeContext` guarda `HashMap<QualifiedName, Value>`; namespaces inferidos (`temp`, `variable`, `context`).
-- `Value::truthy` segue Molang (0 → falso, string vazia → falso, array vazio → falso).
+- `RuntimeContext` guarda `HashMap<QualifiedName, Value>`; namespaces inferidos (`temp`, `variable`, `context`, `query`).
+- `Value::truthy` segue Molang (0 → falso, string/array/struct vazios → falso). Arrays viram o tamanho ao virar `f64` e structs usam `IndexMap`, portanto `temp.location.z = 3` atualiza `temp.location` inteiro. Valores `query.*` são injetados via `RuntimeContext::with_query(...)`.
 
 ## Interpretador
 
 - Usa `ControlSignal` (`None`, `Break`, `Continue`, `Return`) para propagar fluxo.
 - `loop(count, body)` avalia `count`, clampa para `[0, 1024]` e executa o corpo.
 - `for_each(var, collection, ...)` espera `Value::Array` e reatribui `var` a cada elemento.
-- `eval_expr` retorna `(Value, ControlSignal)` e trata operadores (lógica, `??`, ternário, builtins).
+- `eval_expr` retorna `(Value, ControlSignal)` e trata operadores (lógica, `??`, ternário, builtins), literais de struct, `expr[index]` (índices negativos viram 0, grandes dão wrap) e `array.length`.
 
 ## Cranelift JIT
 

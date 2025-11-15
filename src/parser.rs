@@ -1,5 +1,6 @@
 use crate::ast::{BinaryOp, ControlFlowExpr, Expr, Program, Statement, UnaryOp};
 use crate::lexer::{Span, Token, TokenKind};
+use indexmap::IndexMap;
 use thiserror::Error;
 
 /// Recursive-descent parser that produces Molang AST nodes from lexer tokens.
@@ -338,6 +339,13 @@ impl<'a> Parser<'a> {
                 expr = self.finish_call(expr)?;
             } else if self.match_token(TokenKind::Dot) {
                 expr = self.extend_path(expr)?;
+            } else if self.match_token(TokenKind::LBracket) {
+                let index = self.parse_null_coalesce()?;
+                self.expect_token(TokenKind::RBracket, "']' after index expression")?;
+                expr = Expr::Index {
+                    target: Box::new(expr),
+                    index: Box::new(index),
+                };
             } else {
                 break;
             }
@@ -356,6 +364,10 @@ impl<'a> Parser<'a> {
                 let literal = value.clone();
                 self.advance();
                 Ok(Expr::String(literal))
+            }
+            TokenKind::LBrace => {
+                self.advance();
+                self.parse_struct_literal()
             }
             TokenKind::Identifier(name) => {
                 if name.eq_ignore_ascii_case("break") {
@@ -396,6 +408,39 @@ impl<'a> Parser<'a> {
         }
         self.expect_token(TokenKind::RBracket, "']' to close array")?;
         Ok(Expr::Array(elements))
+    }
+
+    fn parse_struct_literal(&mut self) -> Result<Expr, ParseError> {
+        let mut fields = IndexMap::new();
+        if !self.check(TokenKind::RBrace) {
+            loop {
+                let key = match &self.current().kind {
+                    TokenKind::Identifier(name) | TokenKind::String(name) => {
+                        let ident = name.clone();
+                        self.advance();
+                        ident
+                    }
+                    _ => {
+                        return Err(ParseError::UnexpectedToken {
+                            expected: "struct field name",
+                            found: self.current().clone(),
+                            span: self.current().span,
+                        })
+                    }
+                };
+                self.expect_token(TokenKind::Colon, "':' after struct field")?;
+                let value = self.parse_null_coalesce()?;
+                if fields.insert(key.clone(), value).is_some() {
+                    return Err(ParseError::DuplicateStructField { name: key });
+                }
+                if self.match_token(TokenKind::Comma) {
+                    continue;
+                }
+                break;
+            }
+        }
+        self.expect_token(TokenKind::RBrace, "'}' to close struct literal")?;
+        Ok(Expr::Struct(fields))
     }
 
     fn parse_path_expression(&mut self) -> Result<Expr, ParseError> {
@@ -578,6 +623,8 @@ pub enum ParseError {
         found: Token,
         span: Span,
     },
+    #[error("duplicate field `{name}` in struct literal")]
+    DuplicateStructField { name: String },
     #[error("invalid assignment target at {span:?}")]
     InvalidAssignmentTarget { span: Span },
 }

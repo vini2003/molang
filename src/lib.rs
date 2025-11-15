@@ -174,4 +174,50 @@ mod tests {
             eval("return math.round(2.4) + math.ceil(2.1) + math.floor(2.9) + math.trunc(-2.8);");
         assert!((round - 5.0).abs() < 1e-9);
     }
+
+    #[test]
+    fn struct_literals_and_nested_assignment() {
+        let value = eval(
+            "
+            temp.location = { x: 1, y: 2 };
+            temp.location.z = 3;
+            return temp.location.x + temp.location.y + temp.location.z;
+            ",
+        );
+        assert!((value - 6.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn query_bindings_work() {
+        let mut ctx = RuntimeContext::default()
+            .with_query("speed", 2.5)
+            .with_query("height", -1.5);
+        let jit_value =
+            evaluate_expression("return query.speed + math.abs(query.height);", &mut ctx).unwrap();
+        assert!((jit_value - 4.0).abs() < 1e-9);
+
+        let mut ctx = RuntimeContext::default().with_query("offset", -5.0);
+        let interp_value = evaluate_expression(
+            "
+            temp.base = 10;
+            return temp.base + query.offset;
+            ",
+            &mut ctx,
+        )
+        .unwrap();
+        assert!((interp_value - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn array_indexing_and_length() {
+        let value = eval(
+            "
+            temp.values = [10, 20, 30];
+            temp.index = 1;
+            temp.sum = temp.values[temp.index] + temp.values[3] + temp.values.length;
+            return temp.sum;
+            ",
+        );
+        assert!((value - 33.0).abs() < 1e-9);
+    }
 }

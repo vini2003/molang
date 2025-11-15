@@ -12,22 +12,22 @@ This document describes how the runtime executes a Molang snippet from raw text 
    - `jit_cache` stores compiled expressions in a thread-local map keyed by original source. If not cached, `jit::compile_expression` (Cranelift) builds a function that reads required variables from a contiguous slot array.
    - `CompiledExpression::evaluate` converts requested namespaces to slot values via `RuntimeContext::get_number`, executes the JITed function, and returns the resulting `f64`.
 5. **Interpreter Path**:
-   - `Executor` walks the statement list with a shared `RuntimeContext`. `temp.`/`variable.`/`context.` namespaces are normalized via `QualifiedName` and stored as `Value` (numbers, strings, arrays, null).
+   - `Executor` walks the statement list with a shared `RuntimeContext`. `temp.`/`variable.`/`context.`/`query.` namespaces are normalized via `QualifiedName` and stored as `Value` (numbers, strings, arrays, structs, null).
    - Statements: blocks recursively evaluate; assignments mutate the context; `loop` clamps counts to 1024 iterations and respects `break`/`continue`; `for_each` iterates a computed array, binding each element to the provided variable path; `return` short-circuits with a `Value`.
-   - Expressions: support the full operator set (logical short-circuit, `??`, ternaries). `Value::truthy` matches Molang semantics (non-zero numbers, non-empty strings/arrays). Builtin calls map to `BuiltinFunction::evaluate`, which delegates to helpers in `builtins.rs`.
+   - Expressions: support the full operator set (logical short-circuit, `??`, ternaries), struct literals, array indexing, and `.length`. Builtin calls map to `BuiltinFunction::evaluate`, which delegates to helpers in `builtins.rs`.
 6. **Builtins** – Implemented for both interpreter and JIT. `math.*` functions call host helpers (`builtins.rs`) which use a global RNG (mutex) for random operations and rely on `BuiltinFunction::symbol_name` for Cranelift symbol registration (`jit.rs`).
 
 ## Runtime Context & Values
 
-- `RuntimeContext` stores a `HashMap<QualifiedName, Value>`. Namespaces are inferred from prefixes (`temp`, `variable`, `context`) with case-insensitive keys. Arrays and strings are fully owned values; numbers remain `f64`.
-- `Value::truthy` mirrors Molang rules (zero/empty => false). Arrays fall back to their length when coerced to `f64` (used for simple queries like `return [1,2];`).
+- `RuntimeContext` stores a `HashMap<QualifiedName, Value>`. Namespaces are inferred from prefixes (`temp`, `variable`, `context`, `query`). Arrays and strings are fully owned values; struct values use `IndexMap<String, Value>` so nested assignments automatically build parent structs.
+- `Value::truthy` mirrors Molang rules (zero/empty => false). Arrays fall back to their length when coerced to `f64`. Query values are injected by host code via `RuntimeContext::with_query(...)`.
 
 ## Interpreter Details
 
 - Control-flow is modeled with `ControlSignal` (`None`, `Break`, `Continue`, `Return(Value)`). `Executor::exec_statement` validates `break`/`continue` usage based on `loop_depth`.
 - `loop(count, body)` evaluates `count` as a number and clamps to `[0, 1024]`. Each iteration runs the body; `break`/`continue` propagate via `ControlSignal`.
 - `for_each(temp.item, expr, body)` evaluates `expr` and expects a `Value::Array`, iterating elements and rebinding the target variable each time.
-- Expressions inside statements are evaluated via `eval_expr`, which returns `(Value, ControlSignal)`. Null-coalescing returns the first non-null Value; logical ops short-circuit but return numbers (`1` or `0`) to match Molang semantics.
+- Expressions inside statements are evaluated via `eval_expr`, which returns `(Value, ControlSignal)`. Null-coalescing returns the first non-null Value; logical ops short-circuit but return numbers (`1` or `0`). Struct literals produce `Value::Struct`, `expr[index]` operates on arrays (negative indices clamp to zero, large indices wrap), and `array.length` is resolved during nested lookup.
 
 ## Cranelift JIT Details
 
