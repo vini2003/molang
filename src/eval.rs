@@ -449,6 +449,17 @@ impl RuntimeContext {
 
         None
     }
+
+    /// Returns a sorted list of all variables in the context for display purposes.
+    pub fn list_variables(&self) -> Vec<(String, &Value)> {
+        let mut result: Vec<(String, &Value)> = self
+            .values
+            .iter()
+            .map(|(name, value)| (name.to_string(), value))
+            .collect();
+        result.sort_by(|a, b| a.0.cmp(&b.0));
+        result
+    }
 }
 
 fn lookup_nested_value(value: &Value, tail: &[String]) -> Option<Value> {
