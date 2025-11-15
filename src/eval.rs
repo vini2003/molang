@@ -397,6 +397,38 @@ impl RuntimeContext {
         );
     }
 
+    pub fn with_query_string(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.set_query_string(name, value);
+        self
+    }
+
+    pub fn set_query_string(&mut self, name: impl Into<String>, value: impl Into<String>) {
+        let key = name.into().to_ascii_lowercase();
+        self.values.insert(
+            QualifiedName {
+                namespace: Namespace::Query,
+                key,
+            },
+            Value::string(value),
+        );
+    }
+
+    pub fn with_query_value(mut self, name: impl Into<String>, value: Value) -> Self {
+        self.set_query_generic_value(name, value);
+        self
+    }
+
+    pub fn set_query_generic_value(&mut self, name: impl Into<String>, value: Value) {
+        let key = name.into().to_ascii_lowercase();
+        self.values.insert(
+            QualifiedName {
+                namespace: Namespace::Query,
+                key,
+            },
+            value,
+        );
+    }
+
     fn assign_nested(&mut self, namespace: Namespace, segments: &[String], value: Value) {
         let key = segments.join(".");
         let mut current = value;

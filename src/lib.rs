@@ -206,6 +206,104 @@ mod tests {
     }
 
     #[test]
+    fn query_strings_work() {
+        let mut ctx = RuntimeContext::default()
+            .with_query_string("name", "player")
+            .with_query_string("message", "hello");
+        let value = evaluate_expression(
+            "
+            temp.result = query.name;
+            return 1.0;
+            ",
+            &mut ctx,
+        )
+        .unwrap();
+        assert!((value - 1.0).abs() < 1e-9);
+
+        // Verify string was stored
+        let stored = ctx.get_value_canonical("query.name");
+        assert!(matches!(stored, Some(Value::String(_))));
+    }
+
+    #[test]
+    fn query_arrays_work() {
+        let array_value = Value::array(vec![
+            Value::number(1.0),
+            Value::number(2.0),
+            Value::number(3.0),
+        ]);
+        let mut ctx = RuntimeContext::default().with_query_value("items", array_value);
+
+        let value = evaluate_expression("return query.items.length;", &mut ctx).unwrap();
+        assert!((value - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn query_structs_work() {
+        use indexmap::IndexMap;
+        let mut map = IndexMap::new();
+        map.insert("x".to_string(), Value::number(10.0));
+        map.insert("y".to_string(), Value::number(20.0));
+        let struct_value = Value::Struct(map);
+
+        let mut ctx = RuntimeContext::default().with_query_value("position", struct_value);
+        let value = evaluate_expression(
+            "
+            temp.sum = query.position.x + query.position.y;
+            return temp.sum;
+            ",
+            &mut ctx,
+        )
+        .unwrap();
+        assert!((value - 30.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn query_mixed_types() {
+        let mut ctx = RuntimeContext::default()
+            .with_query("speed", 5.0)
+            .with_query_string("mode", "fast")
+            .with_query_value(
+                "data",
+                Value::array(vec![Value::number(1.0), Value::number(2.0)]),
+            );
+
+        let value = evaluate_expression(
+            "
+            temp.result = query.speed + query.data.length;
+            return temp.result;
+            ",
+            &mut ctx,
+        )
+        .unwrap();
+        assert!((value - 7.0).abs() < 1e-9);
+
+        // Verify all types are accessible
+        assert!(matches!(ctx.get_value_canonical("query.speed"), Some(Value::Number(_))));
+        assert!(matches!(ctx.get_value_canonical("query.mode"), Some(Value::String(_))));
+        assert!(matches!(ctx.get_value_canonical("query.data"), Some(Value::Array(_))));
+    }
+
+    #[test]
+    fn query_mutation_after_creation() {
+        let mut ctx = RuntimeContext::default().with_query("value", 10.0);
+
+        // Initial value
+        let result = evaluate_expression("return query.value;", &mut ctx).unwrap();
+        assert!((result - 10.0).abs() < 1e-9);
+
+        // Mutate after creation
+        ctx.set_query_value("value", 20.0);
+        let result = evaluate_expression("return query.value;", &mut ctx).unwrap();
+        assert!((result - 20.0).abs() < 1e-9);
+
+        // Add new query values dynamically
+        ctx.set_query_string("type", "dynamic");
+        let stored = ctx.get_value_canonical("query.type");
+        assert!(matches!(stored, Some(Value::String(_))));
+    }
+
+    #[test]
     fn array_indexing_and_length() {
         let value = eval(
             "
