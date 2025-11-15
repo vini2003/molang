@@ -2,10 +2,11 @@
 
 ## Visão Geral
 
-- Implementação em Rust do tempo de execução Molang com dois motores: JIT (Cranelift) para expressões puras e interpretador para blocos/loops.
+- Implementação em Rust do tempo de execução Molang com compilação JIT completa via Cranelift - todo código é compilado para código de máquina nativo.
 - Gramática segue o spec do Bedrock (identificadores case-insensitive, ternário, `??`, `loop`, `for_each`, blocos `{}`).
 - `RuntimeContext` expõe namespaces `temp.`, `variable.`, `context.`, suportando números, strings e arrays.
 - Builtins disponíveis: `math.cos/sin/abs/random/random_integer/clamp/sqrt/floor/ceil/round/trunc`.
+- REPL interativo com suporte multi-linha, histórico de comandos e destaque de sintaxe.
 
 ## Funcionalidades Suportadas
 
@@ -13,8 +14,10 @@
 - Namespaces com caminhos pontuados (`temp.foo.bar`) e `query.*`.
 - Blocos com várias declarações; `loop`, `for_each`, `break`, `continue`, `return`.
 - Literais de struct `{ x: 1 }`, atribuições encadeadas (`temp.location.z = 3`) e arrays com indexação (`temp.values[i]`) e `.length`.
-- Cache JIT para expressões puras (reaproveita o código nativo compilado).
+- Funções `math.*` compiladas em JIT para chamadas nativas diretas.
 - Namespace `query.*` pode receber valores via `RuntimeContext::with_query("foo", valor)`.
+- Cache JIT para expressões puras (reaproveita o código nativo compilado).
+- Controle de fluxo: loops, for_each, break e continue todos compilados para instruções de controle de fluxo nativas.
 
 ## Não Suportado
 
@@ -24,9 +27,9 @@
 
 ## Notas de Comportamento
 
-- Apenas expressões puras (sem blocos/arrays/strings/flow) passam pelo JIT; o restante usa o interpretador.
+- Todo código é compilado via JIT para código de máquina nativo - não há interpretador de fallback.
+- Expressões puras são cacheadas; programas com declarações são compilados sob demanda.
 - `math.random` usa `SmallRng` global com mutex.
-- `loop` é limitado a 1024 iterações.
 - `??` trata apenas `Value::Null` como ausente.
 
 ## Exemplos
@@ -65,10 +68,35 @@ math.clamp(math.random(0, 5), 1, 4) ?? 2
 
 ## Uso
 
+### REPL Interativo
+
+Execute sem argumentos para iniciar o REPL interativo:
+
+```bash
+cargo run --release
+```
+
+Funcionalidades:
+- Entrada multi-linha com continuação `\`
+- Histórico de comandos (setas ↑ e ↓)
+- Comandos especiais: `:help`, `:vars`, `:clear`, `:exit`
+- Destaque de sintaxe e saída colorida
+
+Veja [REPL_DEMO.md](REPL_DEMO.md) para exemplos.
+
+### Expressão Única
+
+Avalie uma única expressão pela linha de comando:
+
+```bash
+cargo run -- "return math.sqrt(16);"
+cargo run -- "temp.x = 5; temp.y = 10; return temp.x + temp.y"
+```
+
+### Executar Testes
+
 ```bash
 cargo test
-
-cargo run -- "return math.sqrt(16);"
 ```
 
 Em Rust é possível injetar queries:
