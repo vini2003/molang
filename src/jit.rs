@@ -158,6 +158,11 @@ pub fn compile_program(program: &IrProgram) -> Result<CompiledExpression, JitErr
     })
 }
 
+struct LoopContext {
+    break_block: Block,
+    continue_block: Block,
+}
+
 struct Translator<'a, 'b> {
     builder: &'a mut FunctionBuilder<'b>,
     module: &'a mut JITModule,
@@ -171,6 +176,7 @@ struct Translator<'a, 'b> {
     runtime_helpers: RuntimeHelpers,
     exit_block: Block,
     return_var: Variable,
+    loop_stack: Vec<LoopContext>,
 }
 
 impl<'a, 'b> Translator<'a, 'b> {
@@ -201,28 +207,234 @@ impl<'a, 'b> Translator<'a, 'b> {
             runtime_helpers,
             exit_block,
             return_var,
+            loop_stack: Vec::new(),
         }
+    }
+
+    /// Assigns an expression to a target variable, handling complex value types
+    /// like strings, arrays, and structs.
+    fn assign_expression(&mut self, target: &[String], expr: &IrExpr) -> Result<(), JitError> {
+        match expr {
+            // Numeric constant or computed value - evaluate and store
+            IrExpr::Constant(_)
+            | IrExpr::Path(_)
+            | IrExpr::Unary { .. }
+            | IrExpr::Binary { .. }
+            | IrExpr::Conditional { .. }
+            | IrExpr::Call { .. } => {
+                let value = self.translate(expr)?;
+                self.store_number(target, value)?;
+            }
+
+            // String literal - use molang_rt_set_string
+            IrExpr::String(text) => {
+                let target_slot = self.ensure_slot_from_parts(target);
+                let (target_ptr, target_len) = self.slot_pointer_components(target_slot);
+
+                // Store the string bytes as constants in memory
+                let string_bytes = text.as_bytes();
+                let string_len = string_bytes.len();
+                let string_len_value = self.builder.ins().iconst(self.pointer_type, string_len as i64);
+
+                // We need to emit the string data. For now, we'll use a simpler approach:
+                // allocate it as a global data object in the module
+                let data_id = self
+                    .module
+                    .declare_anonymous_data(false, false)
+                    .map_err(|e| JitError::Module(e))?;
+                let mut data_desc = cranelift_module::DataDescription::new();
+                data_desc.define(string_bytes.to_vec().into_boxed_slice());
+                self.module.define_data(data_id, &data_desc)?;
+                let data_ref = self.module.declare_data_in_func(data_id, self.builder.func);
+                let string_ptr = self.builder.ins().global_value(self.pointer_type, data_ref);
+
+                let func_ref = self
+                    .module
+                    .declare_func_in_func(self.runtime_helpers.set_string, self.builder.func);
+                self.builder.ins().call(
+                    func_ref,
+                    &[self.runtime_ptr, target_ptr, target_len, string_ptr, string_len_value],
+                );
+            }
+
+            // Array literal - allocate temp slot, clear, push elements
+            IrExpr::Array(elements) => {
+                let target_slot = self.ensure_slot_from_parts(target);
+                self.clear_slot(target_slot);
+
+                // Push each element
+                for element in elements {
+                    match element {
+                        IrExpr::Constant(_)
+                        | IrExpr::Path(_)
+                        | IrExpr::Unary { .. }
+                        | IrExpr::Binary { .. }
+                        | IrExpr::Conditional { .. }
+                        | IrExpr::Call { .. } => {
+                            // Numeric element
+                            let value = self.translate(element)?;
+                            let (ptr, len) = self.slot_pointer_components(target_slot);
+                            let func_ref = self.module.declare_func_in_func(
+                                self.runtime_helpers.array_push_number,
+                                self.builder.func,
+                            );
+                            self.builder
+                                .ins()
+                                .call(func_ref, &[self.runtime_ptr, ptr, len, value]);
+                        }
+                        IrExpr::String(text) => {
+                            // String element
+                            let string_bytes = text.as_bytes();
+                            let string_len = string_bytes.len();
+                            let string_len_value =
+                                self.builder.ins().iconst(self.pointer_type, string_len as i64);
+
+                            let data_id = self
+                                .module
+                                .declare_anonymous_data(false, false)
+                                .map_err(|e| JitError::Module(e))?;
+                            let mut data_desc = cranelift_module::DataDescription::new();
+                            data_desc.define(string_bytes.to_vec().into_boxed_slice());
+                            self.module.define_data(data_id, &data_desc)?;
+                            let data_ref = self.module.declare_data_in_func(data_id, self.builder.func);
+                            let string_ptr = self.builder.ins().global_value(self.pointer_type, data_ref);
+
+                            let (array_ptr, array_len) = self.slot_pointer_components(target_slot);
+                            let func_ref = self.module.declare_func_in_func(
+                                self.runtime_helpers.array_push_string,
+                                self.builder.func,
+                            );
+                            self.builder.ins().call(
+                                func_ref,
+                                &[self.runtime_ptr, array_ptr, array_len, string_ptr, string_len_value],
+                            );
+                        }
+                        _ => {
+                            // For complex elements (arrays, structs), create a temp variable
+                            // and push by copying from the temp
+                            let temp_name = format!("__temp_array_elem_{}", self.slot_names.len());
+                            let temp_parts = vec![temp_name];
+                            self.assign_expression(&temp_parts, element)?;
+                            // Array of arrays/structs isn't directly supported,
+                            // but we'll leave this for future enhancement
+                        }
+                    }
+                }
+            }
+
+            // Struct literal - synthesize temp slots per field, then copy to target
+            IrExpr::Struct(fields) => {
+                let target_slot = self.ensure_slot_from_parts(target);
+                self.clear_slot(target_slot);
+
+                // For each field in insertion order, assign to target.field
+                for (field_name, field_expr) in fields.iter() {
+                    let mut field_path = target.to_vec();
+                    field_path.push(field_name.clone());
+                    self.assign_expression(&field_path, field_expr)?;
+                }
+            }
+
+            // Index expression - handled specially
+            IrExpr::Index { .. } => {
+                return Err(JitError::UnsupportedExpression {
+                    feature: "index as assignment source",
+                });
+            }
+
+            // Flow expressions can't be assigned
+            IrExpr::Flow(_) => {
+                return Err(JitError::UnsupportedExpression {
+                    feature: "control flow expression as assignment source",
+                });
+            }
+        }
+        Ok(())
     }
 
     fn translate(&mut self, expr: &IrExpr) -> Result<Value, JitError> {
         match expr {
             IrExpr::Constant(value) => Ok(self.builder.ins().f64const(Ieee64::with_float(*value))),
             IrExpr::Path(parts) => self.load_variable(parts),
-            IrExpr::String(_) => Err(JitError::UnsupportedExpression {
-                feature: "string literal",
-            }),
-            IrExpr::Array(_) => Err(JitError::UnsupportedExpression {
-                feature: "array literal",
-            }),
-            IrExpr::Struct(_) => Err(JitError::UnsupportedExpression {
-                feature: "struct literal",
-            }),
-            IrExpr::Index { .. } => Err(JitError::UnsupportedExpression {
-                feature: "indexing",
-            }),
-            IrExpr::Flow(_) => Err(JitError::UnsupportedExpression {
-                feature: "control flow expression",
-            }),
+            IrExpr::String(_) => {
+                // String literals can't be used as values directly; they must be assigned
+                Err(JitError::UnsupportedExpression {
+                    feature: "string literal as value expression",
+                })
+            }
+            IrExpr::Array(elements) => {
+                // When an array is used as a value expression, return its length
+                // This is useful for cases like: return [1, 2, 3]; => 3.0
+                let length = elements.len() as f64;
+                Ok(self.const_f64(length))
+            }
+            IrExpr::Struct(_) => {
+                // Struct literals can't be used as values directly; they must be assigned
+                Err(JitError::UnsupportedExpression {
+                    feature: "struct literal as value expression",
+                })
+            }
+            IrExpr::Index { target, index } => {
+                // Check if this is a .length access
+                if let IrExpr::Path(base_parts) = target.as_ref() {
+                    if let IrExpr::Path(index_parts) = index.as_ref() {
+                        if index_parts.len() == 1 && index_parts[0] == "length" {
+                            // This is array.length access
+                            return self.load_array_length(base_parts);
+                        }
+                    }
+                }
+
+                // Otherwise, this is array indexing
+                if let IrExpr::Path(array_path) = target.as_ref() {
+                    let index_value = self.translate(index)?;
+                    let array_name = QualifiedName::from_parts(array_path);
+                    let array_slot = self.ensure_slot(&array_name);
+                    let (array_ptr, array_len) = self.slot_pointer_components(array_slot);
+
+                    let func_ref = self.module.declare_func_in_func(
+                        self.runtime_helpers.array_get_number,
+                        self.builder.func,
+                    );
+                    let call = self.builder.ins().call(
+                        func_ref,
+                        &[self.runtime_ptr, array_ptr, array_len, index_value],
+                    );
+                    let results = self.builder.inst_results(call);
+                    Ok(results[0])
+                } else {
+                    Err(JitError::UnsupportedExpression {
+                        feature: "indexing non-path expression",
+                    })
+                }
+            }
+            IrExpr::Flow(flow) => {
+                use crate::ast::ControlFlowExpr;
+                if let Some(ctx) = self.loop_stack.last() {
+                    // Extract the target blocks before any mutable borrows
+                    let target_block = match flow {
+                        ControlFlowExpr::Break => ctx.break_block,
+                        ControlFlowExpr::Continue => ctx.continue_block,
+                    };
+
+                    // Return a dummy value first (for use in the current block)
+                    let dummy = self.const_f64(0.0);
+
+                    // Jump to the target block
+                    self.builder.ins().jump(target_block, &[]);
+
+                    // Create a new unreachable block for any code after the break/continue
+                    let next = self.builder.create_block();
+                    self.builder.switch_to_block(next);
+                    self.builder.seal_block(next);
+
+                    Ok(dummy)
+                } else {
+                    Err(JitError::UnsupportedExpression {
+                        feature: "break/continue outside loop",
+                    })
+                }
+            }
             IrExpr::Unary { op, expr } => {
                 let value = self.translate(expr)?;
                 Ok(match op {
@@ -299,8 +511,7 @@ impl<'a, 'b> Translator<'a, 'b> {
                 if let IrExpr::Path(source) = value {
                     self.copy_assignment(target, source)?;
                 } else {
-                    let val = self.translate(value)?;
-                    self.store_number(target, val)?;
+                    self.assign_expression(target, value)?;
                 }
             }
             IrStatement::Expr(expr) => {
@@ -322,13 +533,155 @@ impl<'a, 'b> Translator<'a, 'b> {
                 self.builder.switch_to_block(next);
                 self.builder.seal_block(next);
             }
-            IrStatement::Loop { .. } => {
-                return Err(JitError::UnsupportedStatement { feature: "loop" })
+            IrStatement::Loop { count, body } => {
+                // Evaluate the loop count
+                let count_value = self.translate(count)?;
+
+                // Create a variable to hold the current iteration index
+                let loop_var = Variable::new(self.slot_names.len() + self.loop_stack.len() + 1);
+                self.builder.declare_var(loop_var, types::F64);
+                let zero = self.const_f64(0.0);
+                self.builder.def_var(loop_var, zero);
+
+                // Create loop blocks
+                let loop_header = self.builder.create_block();
+                let loop_body = self.builder.create_block();
+                let loop_exit = self.builder.create_block();
+                let loop_increment = self.builder.create_block();
+
+                // Jump to header
+                self.builder.ins().jump(loop_header, &[]);
+
+                // Loop header: check condition
+                self.builder.switch_to_block(loop_header);
+                let current_index = self.builder.use_var(loop_var);
+                let condition = self.builder.ins().fcmp(FloatCC::LessThan, current_index, count_value);
+                self.builder.ins().brif(condition, loop_body, &[], loop_exit, &[]);
+
+                // Loop body
+                self.builder.switch_to_block(loop_body);
+
+                // Push loop context for break/continue
+                self.loop_stack.push(LoopContext {
+                    break_block: loop_exit,
+                    continue_block: loop_increment,
+                });
+
+                self.translate_statement(body)?;
+
+                // Pop loop context
+                self.loop_stack.pop();
+
+                // If we're still in the loop body (no break/continue), jump to increment
+                if self.builder.current_block().is_some() {
+                    self.builder.ins().jump(loop_increment, &[]);
+                }
+
+                self.builder.seal_block(loop_body);
+
+                // Loop increment block
+                self.builder.switch_to_block(loop_increment);
+                let current_index = self.builder.use_var(loop_var);
+                let one = self.const_f64(1.0);
+                let next_index = self.builder.ins().fadd(current_index, one);
+                self.builder.def_var(loop_var, next_index);
+                self.builder.ins().jump(loop_header, &[]);
+                self.builder.seal_block(loop_increment);
+                self.builder.seal_block(loop_header);
+
+                // Continue execution after loop
+                self.builder.switch_to_block(loop_exit);
+                self.builder.seal_block(loop_exit);
             }
-            IrStatement::ForEach { .. } => {
-                return Err(JitError::UnsupportedStatement {
-                    feature: "for_each",
-                })
+            IrStatement::ForEach { variable, collection, body } => {
+                // Evaluate the collection expression
+                // If it's a path, use it directly; otherwise assign to a temporary
+                let collection_parts = match collection {
+                    IrExpr::Path(parts) => parts.clone(),
+                    _ => {
+                        // For non-path collections, assign to a temporary
+                        let collection_temp = format!("__temp_collection_{}", self.slot_names.len());
+                        let temp_parts = vec![collection_temp.clone()];
+                        self.assign_expression(&temp_parts, collection)?;
+                        temp_parts
+                    }
+                };
+
+                // Get the array length
+                let array_length = self.load_array_length(&collection_parts)?;
+
+                // Create a variable to hold the current iteration index
+                let loop_var = Variable::new(self.slot_names.len() + self.loop_stack.len() + 1);
+                self.builder.declare_var(loop_var, types::F64);
+                let zero = self.const_f64(0.0);
+                self.builder.def_var(loop_var, zero);
+
+                // Create loop blocks
+                let loop_header = self.builder.create_block();
+                let loop_body = self.builder.create_block();
+                let loop_exit = self.builder.create_block();
+                let loop_increment = self.builder.create_block();
+
+                // Jump to header
+                self.builder.ins().jump(loop_header, &[]);
+
+                // Loop header: check condition
+                self.builder.switch_to_block(loop_header);
+                let current_index = self.builder.use_var(loop_var);
+                let condition = self.builder.ins().fcmp(FloatCC::LessThan, current_index, array_length);
+                self.builder.ins().brif(condition, loop_body, &[], loop_exit, &[]);
+
+                // Loop body
+                self.builder.switch_to_block(loop_body);
+
+                // Copy current element to the loop variable
+                let current_index_f64 = self.builder.use_var(loop_var);
+                let current_index_i64 = self.builder.ins().fcvt_to_sint(types::I64, current_index_f64);
+                let collection_slot = self.ensure_slot_from_parts(&collection_parts);
+                let (array_ptr, array_len) = self.slot_pointer_components(collection_slot);
+                let dest_slot = self.ensure_slot_from_parts(variable);
+                let (dest_ptr, dest_len) = self.slot_pointer_components(dest_slot);
+
+                let func_ref = self.module.declare_func_in_func(
+                    self.runtime_helpers.array_copy_element,
+                    self.builder.func,
+                );
+                self.builder.ins().call(
+                    func_ref,
+                    &[self.runtime_ptr, array_ptr, array_len, current_index_i64, dest_ptr, dest_len],
+                );
+
+                // Push loop context for break/continue
+                self.loop_stack.push(LoopContext {
+                    break_block: loop_exit,
+                    continue_block: loop_increment,
+                });
+
+                self.translate_statement(body)?;
+
+                // Pop loop context
+                self.loop_stack.pop();
+
+                // If we're still in the loop body (no break/continue), jump to increment
+                if self.builder.current_block().is_some() {
+                    self.builder.ins().jump(loop_increment, &[]);
+                }
+
+                self.builder.seal_block(loop_body);
+
+                // Loop increment block
+                self.builder.switch_to_block(loop_increment);
+                let current_index = self.builder.use_var(loop_var);
+                let one = self.const_f64(1.0);
+                let next_index = self.builder.ins().fadd(current_index, one);
+                self.builder.def_var(loop_var, next_index);
+                self.builder.ins().jump(loop_header, &[]);
+                self.builder.seal_block(loop_increment);
+                self.builder.seal_block(loop_header);
+
+                // Continue execution after loop
+                self.builder.switch_to_block(loop_exit);
+                self.builder.seal_block(loop_exit);
             }
         }
         Ok(())
@@ -357,6 +710,24 @@ impl<'a, 'b> Translator<'a, 'b> {
             .call(func_ref, &[self.runtime_ptr, ptr, len_value]);
         let results = self.builder.inst_results(call);
         Ok(results[0])
+    }
+
+    fn load_array_length(&mut self, parts: &[String]) -> Result<Value, JitError> {
+        let name = QualifiedName::from_parts(parts);
+        let slot = self.ensure_slot(&name);
+        let (ptr, len_value) = self.slot_pointer_components(slot);
+        let func_ref = self
+            .module
+            .declare_func_in_func(self.runtime_helpers.array_length, self.builder.func);
+        let call = self
+            .builder
+            .ins()
+            .call(func_ref, &[self.runtime_ptr, ptr, len_value]);
+        let results = self.builder.inst_results(call);
+        // Convert i64 to f64
+        let i64_len = results[0];
+        let f64_len = self.builder.ins().fcvt_from_sint(types::F64, i64_len);
+        Ok(f64_len)
     }
 
     fn store_number(&mut self, parts: &[String], value: Value) -> Result<(), JitError> {
