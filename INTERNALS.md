@@ -35,6 +35,7 @@ This document describes how the runtime executes a Molang snippet from raw text 
 - `jit.rs` translates `IrExpr` into CLIF via `Translator`. Each referenced path becomes a slot index; the interpreter must provide the numeric values when executing the compiled function (`CompiledExpression::evaluate`).
 - Builtins are declared through `BuiltinFunction::symbol_name` and registered with Cranelift's JIT builder (`register_builtin_symbols`). Random/clamp/floor/ceil suck in helper functions from `builtins.rs`.
 - `jit_cache` caches `Arc<CompiledExpression>` per thread to avoid recompilation. Keying by the original input string means identical expressions reuse compiled code even if evaluated in different contexts; interpreter values are injected per call.
+- ABI detail: every compiled function now receives `(RuntimeContext*, RuntimeSlot*)`. `RuntimeSlot` is a tiny table built at compile time that stores canonical path strings (`temp.speed`, `query.foo`, etc.). The generated code loads the canonical pointer/length from this table and calls `molang_rt_get_number`, which in turn resolves the path in `RuntimeContext`. This keeps the JIT numeric-only while letting it resolve arbitrary namespaces at runtime without materialising an intermediate slot array.
 
 ## Testing
 

@@ -1,10 +1,15 @@
-use crate::ast::{BinaryOp, Expr, UnaryOp};
+use crate::ast::{BinaryOp, ControlFlowExpr, Expr, Program, Statement, UnaryOp};
+use indexmap::IndexMap;
 use thiserror::Error;
 
+/// Expression IR that can be fed directly to the Cranelift JIT.
 #[derive(Debug, Clone)]
 pub enum IrExpr {
     Constant(f64),
     Path(Vec<String>),
+    String(String),
+    Array(Vec<IrExpr>),
+    Struct(IndexMap<String, IrExpr>),
     Unary {
         op: UnaryOp,
         expr: Box<IrExpr>,
@@ -23,6 +28,37 @@ pub enum IrExpr {
         function: FunctionRef,
         args: Vec<IrExpr>,
     },
+    Index {
+        target: Box<IrExpr>,
+        index: Box<IrExpr>,
+    },
+    Flow(ControlFlowExpr),
+}
+
+/// Statement-level IR that will eventually replace the interpreter.
+#[derive(Debug, Clone)]
+pub enum IrStatement {
+    Assign {
+        target: Vec<String>,
+        value: IrExpr,
+    },
+    Block(Vec<IrStatement>),
+    Loop {
+        count: IrExpr,
+        body: Box<IrStatement>,
+    },
+    ForEach {
+        variable: Vec<String>,
+        collection: IrExpr,
+        body: Box<IrStatement>,
+    },
+    Return(Option<IrExpr>),
+    Expr(IrExpr),
+}
+
+#[derive(Debug, Clone)]
+pub struct IrProgram {
+    pub statements: Vec<IrStatement>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -121,6 +157,47 @@ impl BuiltinFunction {
 pub struct IrBuilder;
 
 impl IrBuilder {
+    /// Lowers a full AST program into statement-level IR.
+    pub fn lower_program(&self, program: &Program) -> Result<IrProgram, LowerError> {
+        let mut statements = Vec::new();
+        for stmt in &program.statements {
+            statements.push(self.lower_statement(stmt)?);
+        }
+        Ok(IrProgram { statements })
+    }
+
+    fn lower_statement(&self, statement: &Statement) -> Result<IrStatement, LowerError> {
+        Ok(match statement {
+            Statement::Expr(expr) => IrStatement::Expr(self.lower_expr(expr)?),
+            Statement::Assignment { target, value } => IrStatement::Assign {
+                target: target.clone(),
+                value: self.lower_expr(value)?,
+            },
+            Statement::Block(list) => IrStatement::Block(
+                list.iter()
+                    .map(|stmt| self.lower_statement(stmt))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            Statement::Loop { count, body } => IrStatement::Loop {
+                count: self.lower_expr(count)?,
+                body: Box::new(self.lower_statement(body)?),
+            },
+            Statement::ForEach {
+                variable,
+                collection,
+                body,
+            } => IrStatement::ForEach {
+                variable: variable.clone(),
+                collection: self.lower_expr(collection)?,
+                body: Box::new(self.lower_statement(body)?),
+            },
+            Statement::Return(expr) => IrStatement::Return(match expr {
+                Some(expr) => Some(self.lower_expr(expr)?),
+                None => None,
+            }),
+        })
+    }
+
     pub fn lower(&self, expr: &Expr) -> Result<IrExpr, LowerError> {
         self.lower_expr(expr)
     }
@@ -129,8 +206,20 @@ impl IrBuilder {
         match expr {
             Expr::Number(value) => Ok(IrExpr::Constant(*value)),
             Expr::Path(parts) => Ok(IrExpr::Path(parts.clone())),
-            Expr::String(_) | Expr::Array(_) | Expr::Struct(_) | Expr::Index { .. } => {
-                Err(LowerError::UnsupportedLiteral)
+            Expr::String(text) => Ok(IrExpr::String(text.clone())),
+            Expr::Array(items) => {
+                let lowered = items
+                    .iter()
+                    .map(|expr| self.lower_expr(expr))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(IrExpr::Array(lowered))
+            }
+            Expr::Struct(entries) => {
+                let mut lowered = IndexMap::new();
+                for (key, value) in entries.iter() {
+                    lowered.insert(key.clone(), self.lower_expr(value)?);
+                }
+                Ok(IrExpr::Struct(lowered))
             }
             Expr::Unary { op, expr } => Ok(IrExpr::Unary {
                 op: *op,
@@ -165,7 +254,11 @@ impl IrBuilder {
                     args: lowered_args,
                 })
             }
-            Expr::Flow(_) => Err(LowerError::UnsupportedControlFlow),
+            Expr::Flow(flow) => Ok(IrExpr::Flow(*flow)),
+            Expr::Index { target, index } => Ok(IrExpr::Index {
+                target: Box::new(self.lower_expr(target)?),
+                index: Box::new(self.lower_expr(index)?),
+            }),
         }
     }
 
@@ -216,8 +309,4 @@ pub enum LowerError {
         expected: usize,
         actual: usize,
     },
-    #[error("control flow expressions cannot be lowered for JIT execution")]
-    UnsupportedControlFlow,
-    #[error("literal expressions are not supported by the JIT")]
-    UnsupportedLiteral,
 }

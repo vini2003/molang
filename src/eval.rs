@@ -103,6 +103,14 @@ impl QualifiedName {
             self.key.split('.').map(|s| s.to_string()).collect()
         }
     }
+
+    pub fn to_path(&self) -> Vec<String> {
+        let mut parts = vec![self.namespace.prefix().to_string()];
+        if !self.key.is_empty() {
+            parts.extend(self.key.split('.').map(|segment| segment.to_string()));
+        }
+        parts
+    }
 }
 
 impl fmt::Display for QualifiedName {
@@ -226,6 +234,144 @@ impl RuntimeContext {
         self.get_number(name).unwrap_or(0.0)
     }
 
+    pub fn get_number_canonical(&self, canonical: &str) -> Option<f64> {
+        let (namespace, segments) = parse_canonical_path(canonical)?;
+        self.lookup_namespace_path(namespace, &segments)
+            .map(|value| value.as_number())
+    }
+
+    pub fn get_value_canonical(&self, canonical: &str) -> Option<Value> {
+        let (namespace, segments) = parse_canonical_path(canonical)?;
+        self.lookup_namespace_path(namespace, &segments)
+    }
+
+    pub fn set_number_canonical(&mut self, canonical: &str, value: f64) {
+        if let Some((namespace, segments)) = parse_canonical_path(canonical) {
+            if namespace == Namespace::Query || segments.is_empty() {
+                return;
+            }
+            let lower = segments
+                .into_iter()
+                .map(|segment| segment.to_ascii_lowercase())
+                .collect::<Vec<_>>();
+            self.assign_nested(namespace, &lower, Value::number(value));
+        }
+    }
+
+    pub fn set_value_canonical(&mut self, canonical: &str, value: Value) {
+        if let Some((namespace, segments)) = parse_canonical_path(canonical) {
+            if namespace == Namespace::Query || segments.is_empty() {
+                return;
+            }
+            let lower = segments
+                .into_iter()
+                .map(|segment| segment.to_ascii_lowercase())
+                .collect::<Vec<_>>();
+            self.assign_nested(namespace, &lower, value);
+        }
+    }
+
+    pub fn clear_value_canonical(&mut self, canonical: &str) {
+        if let Some((namespace, segments)) = parse_canonical_path(canonical) {
+            let lower = segments
+                .into_iter()
+                .map(|segment| segment.to_ascii_lowercase())
+                .collect::<Vec<_>>();
+            let key = lower.join(".");
+            let prefix = if key.is_empty() {
+                String::new()
+            } else {
+                format!("{key}.")
+            };
+            self.values.retain(|name, _| {
+                if name.namespace() != &namespace {
+                    return true;
+                }
+                let current = name.key();
+                if current == key {
+                    return false;
+                }
+                if prefix.is_empty() {
+                    true
+                } else {
+                    !current.starts_with(&prefix)
+                }
+            });
+        }
+    }
+
+    pub fn copy_value_canonical(&mut self, dest: &str, src: &str) {
+        if let Some(value) = self.get_value_canonical(src) {
+            self.set_value_canonical(dest, value);
+        } else {
+            self.clear_value_canonical(dest);
+        }
+    }
+
+    pub fn array_push_number_canonical(&mut self, canonical: &str, value: f64) {
+        self.array_push_value_canonical(canonical, Value::number(value));
+    }
+
+    pub fn array_push_value_canonical(&mut self, canonical: &str, value: Value) {
+        let mut values = match self.get_value_canonical(canonical) {
+            Some(Value::Array(existing)) => existing,
+            _ => Vec::new(),
+        };
+        values.push(value);
+        self.set_value_canonical(canonical, Value::Array(values));
+    }
+
+    pub fn array_push_string_canonical(&mut self, canonical: &str, value: &str) {
+        self.array_push_value_canonical(canonical, Value::string(value));
+    }
+
+    pub fn array_get_number_canonical(&self, canonical: &str, index: f64) -> f64 {
+        self.array_get_value_canonical(canonical, index)
+            .map(|value| value.as_number())
+            .unwrap_or(0.0)
+    }
+
+    pub fn array_length_canonical(&self, canonical: &str) -> i64 {
+        match self.get_value_canonical(canonical) {
+            Some(Value::Array(values)) => values.len() as i64,
+            _ => 0,
+        }
+    }
+
+    pub fn array_copy_element_canonical(&mut self, canonical: &str, index: i64, dest: &str) {
+        if let Some(value) = self.array_get_value_by_index(canonical, index) {
+            self.set_value_canonical(dest, value);
+        } else {
+            self.clear_value_canonical(dest);
+        }
+    }
+
+    fn array_get_value_canonical(&self, canonical: &str, index: f64) -> Option<Value> {
+        let idx = index as i64;
+        self.array_get_value_by_index(canonical, idx)
+    }
+
+    fn array_get_value_by_index(&self, canonical: &str, index: i64) -> Option<Value> {
+        match self.get_value_canonical(canonical) {
+            Some(Value::Array(values)) => {
+                if values.is_empty() {
+                    return None;
+                }
+                let mut idx = index;
+                if idx < 0 {
+                    idx = 0;
+                }
+                let len = values.len() as i64;
+                if len == 0 {
+                    return None;
+                }
+                let wrapped = (idx % len + len) % len;
+                values.get(wrapped as usize).cloned()
+            }
+            _ => None,
+        }
+    }
+
     pub fn get_value_for_path(&self, parts: &[String]) -> Option<Value> {
         let (namespace, raw_segments) = Namespace::split_parts(parts);
         let segments: Vec<String> = raw_segments
@@ -324,4 +470,12 @@ fn lookup_nested_value(value: &Value, tail: &[String]) -> Option<Value> {
         }
         _ => None,
     }
+}
+
+fn parse_canonical_path(canonical: &str) -> Option<(Namespace, Vec<String>)> {
+    let mut iter = canonical.split('.');
+    let ns = iter.next()?;
+    let namespace = Namespace::from_prefix(ns)?;
+    let segments = iter.map(|segment| segment.to_string()).collect();
+    Some((namespace, segments))
 }

@@ -33,6 +33,7 @@
 - `IrExpr` exclui literais complexos/control flow. `Translator` cria CLIF e slots para variáveis.
 - Slots são preenchidos em `CompiledExpression::evaluate` lendo `RuntimeContext::get_number`.
 - Builtins registrados com `register_builtin_symbols`.
+- Detalhe do ABI: cada função compilada recebe `(RuntimeContext*, RuntimeSlot*)`. Em tempo de compilação geramos uma tabela `RuntimeSlot` com as strings canônicas (`temp.speed`, `query.foo`). O código nativo carrega ponteiro + tamanho e chama `molang_rt_get_number`, que consulta o `RuntimeContext`. Assim o JIT permanece numérico, mas consegue resolver qualquer namespace em tempo de execução sem montar arrays temporários.
 
 ## Testes
 

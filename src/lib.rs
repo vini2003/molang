@@ -1,7 +1,6 @@
 pub mod ast;
 pub mod builtins;
 pub mod eval;
-pub mod executor;
 pub mod ir;
 pub mod jit;
 mod jit_cache;
@@ -23,8 +22,6 @@ pub enum MolangError {
     Lower(#[from] ir::LowerError),
     #[error(transparent)]
     Jit(#[from] jit::JitError),
-    #[error(transparent)]
-    Exec(#[from] executor::ExecError),
 }
 
 /// Entry point for host code: lex/parse a Molang snippet, and dispatch either to the
@@ -33,15 +30,15 @@ pub fn evaluate_expression(input: &str, ctx: &mut RuntimeContext) -> Result<f64,
     let tokens = lexer::lex(input)?;
     let mut parser = parser::Parser::new(&tokens);
     let program = parser.parse_program()?;
+    let builder = IrBuilder::default();
     if let Some(expr) = program.as_jit_expression() {
-        let builder = IrBuilder::default();
         let ir = builder.lower(expr)?;
         let compiled = jit_cache::compile_cached(input, &ir)?;
         compiled.evaluate(ctx).map_err(MolangError::from)
     } else {
-        let mut executor = executor::Executor::default();
-        let value = executor.execute(&program, ctx)?;
-        Ok(value.as_number())
+        let ir_program = builder.lower_program(&program)?;
+        let compiled = jit::compile_program(&ir_program)?;
+        compiled.evaluate(ctx).map_err(MolangError::from)
     }
 }
 
