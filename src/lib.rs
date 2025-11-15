@@ -315,4 +315,209 @@ mod tests {
         );
         assert!((value - 33.0).abs() < 1e-9);
     }
+
+    #[test]
+    fn trigonometric_functions() {
+        // Test acos, asin, atan
+        let acos_result = eval("return math.acos(0);");
+        assert!((acos_result - 90.0).abs() < 1e-6);
+
+        let asin_result = eval("return math.asin(1);");
+        assert!((asin_result - 90.0).abs() < 1e-6);
+
+        let atan_result = eval("return math.atan(1);");
+        assert!((atan_result - 45.0).abs() < 1e-6);
+
+        // Test atan2
+        let atan2_result = eval("return math.atan2(1, 1);");
+        assert!((atan2_result - 45.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn exponential_and_logarithmic_functions() {
+        // Test exp
+        let exp_result = eval("return math.exp(0);");
+        assert!((exp_result - 1.0).abs() < 1e-9);
+
+        // Test ln
+        let ln_result = eval("return math.ln(2.718281828459045);");
+        assert!((ln_result - 1.0).abs() < 1e-6);
+
+        // Test pow
+        let pow_result = eval("return math.pow(2, 3);");
+        assert!((pow_result - 8.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn basic_arithmetic_functions() {
+        // Test max and min
+        let max_result = eval("return math.max(5, 10);");
+        assert!((max_result - 10.0).abs() < 1e-9);
+
+        let min_result = eval("return math.min(5, 10);");
+        assert!((min_result - 5.0).abs() < 1e-9);
+
+        // Test mod
+        let mod_result = eval("return math.mod(10, 3);");
+        assert!((mod_result - 1.0).abs() < 1e-9);
+
+        // Test sign
+        let sign_pos = eval("return math.sign(5);");
+        assert!((sign_pos - 1.0).abs() < 1e-9);
+
+        let sign_neg = eval("return math.sign(-5);");
+        assert!((sign_neg - (-1.0)).abs() < 1e-9);
+
+        // Test copy_sign
+        let copy_sign_result = eval("return math.copy_sign(10, -1);");
+        assert!((copy_sign_result - (-10.0)).abs() < 1e-9);
+
+        // Test pi
+        let pi_result = eval("return math.pi();");
+        assert!((pi_result - std::f64::consts::PI).abs() < 1e-9);
+    }
+
+    #[test]
+    fn angle_functions() {
+        // Test min_angle
+        let angle1 = eval("return math.min_angle(190);");
+        assert!((angle1 - (-170.0)).abs() < 1e-9);
+
+        let angle2 = eval("return math.min_angle(-200);");
+        assert!((angle2 - 160.0).abs() < 1e-9);
+
+        let angle3 = eval("return math.min_angle(45);");
+        assert!((angle3 - 45.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn interpolation_functions() {
+        // Test lerp
+        let lerp_result = eval("return math.lerp(0, 10, 0.5);");
+        assert!((lerp_result - 5.0).abs() < 1e-9);
+
+        // Test inverse_lerp
+        let inverse_lerp_result = eval("return math.inverse_lerp(0, 10, 5);");
+        assert!((inverse_lerp_result - 0.5).abs() < 1e-9);
+
+        // Test lerprotate
+        let lerprotate_result = eval("return math.lerprotate(10, 350, 0.5);");
+        assert!((lerprotate_result - 0.0).abs() < 1e-6);
+
+        // Test hermite_blend
+        let hermite_result = eval("return math.hermite_blend(0.5);");
+        assert!((hermite_result - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn die_roll_functions() {
+        // Test that die_roll returns a value in the expected range
+        let die_roll_result = eval("return math.die_roll(3, 1, 6);");
+        assert!(die_roll_result >= 3.0 && die_roll_result <= 18.0);
+
+        // Test that die_roll_integer returns an integer value
+        let die_roll_int_result = eval("return math.die_roll_integer(2, 1, 6);");
+        assert!(die_roll_int_result >= 2.0 && die_roll_int_result <= 12.0);
+        assert!((die_roll_int_result - die_roll_int_result.floor()).abs() < 1e-9);
+    }
+
+    #[test]
+    fn easing_functions_quad() {
+        // Test quadratic easing
+        let ease_in = eval("return math.ease_in_quad(0, 10, 0.5);");
+        assert!((ease_in - 2.5).abs() < 1e-9);
+
+        let ease_out = eval("return math.ease_out_quad(0, 10, 0.5);");
+        assert!((ease_out - 7.5).abs() < 1e-9);
+
+        let ease_in_out = eval("return math.ease_in_out_quad(0, 10, 0.5);");
+        assert!((ease_in_out - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn easing_functions_cubic() {
+        // Test cubic easing at boundaries
+        let ease_in_start = eval("return math.ease_in_cubic(0, 10, 0);");
+        assert!((ease_in_start - 0.0).abs() < 1e-9);
+
+        let ease_in_end = eval("return math.ease_in_cubic(0, 10, 1);");
+        assert!((ease_in_end - 10.0).abs() < 1e-9);
+
+        let ease_out_start = eval("return math.ease_out_cubic(0, 10, 0);");
+        assert!((ease_out_start - 0.0).abs() < 1e-9);
+
+        let ease_out_end = eval("return math.ease_out_cubic(0, 10, 1);");
+        assert!((ease_out_end - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn easing_functions_sine() {
+        // Test sine easing
+        let ease_in_sine = eval("return math.ease_in_sine(0, 10, 1);");
+        assert!((ease_in_sine - 10.0).abs() < 1e-6);
+
+        let ease_out_sine = eval("return math.ease_out_sine(0, 10, 0);");
+        assert!((ease_out_sine - 0.0).abs() < 1e-9);
+
+        let ease_in_out_sine = eval("return math.ease_in_out_sine(0, 10, 0.5);");
+        assert!((ease_in_out_sine - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn easing_functions_circular() {
+        // Test circular easing at boundaries
+        let ease_in = eval("return math.ease_in_circ(0, 10, 0);");
+        assert!((ease_in - 0.0).abs() < 1e-9);
+
+        let ease_out = eval("return math.ease_out_circ(0, 10, 1);");
+        assert!((ease_out - 10.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn easing_functions_back() {
+        // Test back easing - should overshoot
+        let ease_in_back = eval("return math.ease_in_back(0, 10, 1);");
+        assert!((ease_in_back - 10.0).abs() < 1e-6);
+
+        let ease_out_back = eval("return math.ease_out_back(0, 10, 1);");
+        assert!((ease_out_back - 10.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn all_easing_functions_preserve_boundaries() {
+        // All easing functions should map 0 to start and 1 to end
+        let functions = vec![
+            "ease_in_quad", "ease_out_quad", "ease_in_out_quad",
+            "ease_in_cubic", "ease_out_cubic", "ease_in_out_cubic",
+            "ease_in_quart", "ease_out_quart", "ease_in_out_quart",
+            "ease_in_quint", "ease_out_quint", "ease_in_out_quint",
+            "ease_in_sine", "ease_out_sine", "ease_in_out_sine",
+            "ease_in_expo", "ease_out_expo", "ease_in_out_expo",
+            "ease_in_circ", "ease_out_circ", "ease_in_out_circ",
+            "ease_in_back", "ease_out_back", "ease_in_out_back",
+            "ease_in_elastic", "ease_out_elastic", "ease_in_out_elastic",
+            "ease_in_bounce", "ease_out_bounce", "ease_in_out_bounce",
+        ];
+
+        for func in functions {
+            let start_script = format!("return math.{}(5, 15, 0);", func);
+            let end_script = format!("return math.{}(5, 15, 1);", func);
+
+            let start_result = eval(&start_script);
+            let end_result = eval(&end_script);
+
+            assert!(
+                (start_result - 5.0).abs() < 1e-6,
+                "{} failed at t=0: expected 5.0, got {}",
+                func,
+                start_result
+            );
+            assert!(
+                (end_result - 15.0).abs() < 1e-6,
+                "{} failed at t=1: expected 15.0, got {}",
+                func,
+                end_result
+            );
+        }
+    }
 }

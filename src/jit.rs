@@ -1000,48 +1000,242 @@ impl<'a, 'b> Translator<'a, 'b> {
 
 fn register_builtin_symbols(builder: &mut JITBuilder) {
     builder.symbol(
-        BuiltinFunction::MathCos.symbol_name(),
+        "builtin_math_cos",
         builtins::builtin_math_cos as *const u8,
     );
     builder.symbol(
-        BuiltinFunction::MathSin.symbol_name(),
+        "builtin_math_sin",
         builtins::builtin_math_sin as *const u8,
     );
     builder.symbol(
-        BuiltinFunction::MathAbs.symbol_name(),
+        "builtin_math_abs",
         builtins::builtin_math_abs as *const u8,
     );
     builder.symbol(
-        BuiltinFunction::MathRandom.symbol_name(),
+        "builtin_math_random",
         builtins::builtin_math_random as *const u8,
     );
     builder.symbol(
-        BuiltinFunction::MathRandomInteger.symbol_name(),
+        "builtin_math_random_integer",
         builtins::builtin_math_random_integer as *const u8,
     );
     builder.symbol(
-        BuiltinFunction::MathClamp.symbol_name(),
+        "builtin_math_clamp",
         builtins::builtin_math_clamp as *const u8,
     );
     builder.symbol(
-        BuiltinFunction::MathSqrt.symbol_name(),
+        "builtin_math_sqrt",
         builtins::builtin_math_sqrt as *const u8,
     );
     builder.symbol(
-        BuiltinFunction::MathFloor.symbol_name(),
+        "builtin_math_floor",
         builtins::builtin_math_floor as *const u8,
     );
     builder.symbol(
-        BuiltinFunction::MathCeil.symbol_name(),
+        "builtin_math_ceil",
         builtins::builtin_math_ceil as *const u8,
     );
     builder.symbol(
-        BuiltinFunction::MathRound.symbol_name(),
+        "builtin_math_round",
         builtins::builtin_math_round as *const u8,
     );
     builder.symbol(
-        BuiltinFunction::MathTrunc.symbol_name(),
+        "builtin_math_trunc",
         builtins::builtin_math_trunc as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_acos",
+        builtins::builtin_math_acos as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_asin",
+        builtins::builtin_math_asin as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_atan",
+        builtins::builtin_math_atan as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_atan2",
+        builtins::builtin_math_atan2 as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_exp",
+        builtins::builtin_math_exp as *const u8,
+    );
+    builder.symbol("builtin_math_ln", builtins::builtin_math_ln as *const u8);
+    builder.symbol(
+        "builtin_math_pow",
+        builtins::builtin_math_pow as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_max",
+        builtins::builtin_math_max as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_min",
+        builtins::builtin_math_min as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_mod",
+        builtins::builtin_math_mod as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_sign",
+        builtins::builtin_math_sign as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_copy_sign",
+        builtins::builtin_math_copy_sign as *const u8,
+    );
+    builder.symbol("builtin_math_pi", builtins::builtin_math_pi as *const u8);
+    builder.symbol(
+        "builtin_math_min_angle",
+        builtins::builtin_math_min_angle as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_lerp",
+        builtins::builtin_math_lerp as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_inverse_lerp",
+        builtins::builtin_math_inverse_lerp as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_lerprotate",
+        builtins::builtin_math_lerprotate as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_hermite_blend",
+        builtins::builtin_math_hermite_blend as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_die_roll",
+        builtins::builtin_math_die_roll as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_die_roll_integer",
+        builtins::builtin_math_die_roll_integer as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_ease_in_quad",
+        builtins::builtin_math_ease_in_quad as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_ease_out_quad",
+        builtins::builtin_math_ease_out_quad as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_ease_in_out_quad",
+        builtins::builtin_math_ease_in_out_quad as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_ease_in_cubic",
+        builtins::builtin_math_ease_in_cubic as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_ease_out_cubic",
+        builtins::builtin_math_ease_out_cubic as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_ease_in_out_cubic",
+        builtins::builtin_math_ease_in_out_cubic as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_ease_in_quart",
+        builtins::builtin_math_ease_in_quart as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_ease_out_quart",
+        builtins::builtin_math_ease_out_quart as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_ease_in_out_quart",
+        builtins::builtin_math_ease_in_out_quart as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_ease_in_quint",
+        builtins::builtin_math_ease_in_quint as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_ease_out_quint",
+        builtins::builtin_math_ease_out_quint as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_ease_in_out_quint",
+        builtins::builtin_math_ease_in_out_quint as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_ease_in_sine",
+        builtins::builtin_math_ease_in_sine as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_ease_out_sine",
+        builtins::builtin_math_ease_out_sine as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_ease_in_out_sine",
+        builtins::builtin_math_ease_in_out_sine as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_ease_in_expo",
+        builtins::builtin_math_ease_in_expo as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_ease_out_expo",
+        builtins::builtin_math_ease_out_expo as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_ease_in_out_expo",
+        builtins::builtin_math_ease_in_out_expo as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_ease_in_circ",
+        builtins::builtin_math_ease_in_circ as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_ease_out_circ",
+        builtins::builtin_math_ease_out_circ as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_ease_in_out_circ",
+        builtins::builtin_math_ease_in_out_circ as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_ease_in_back",
+        builtins::builtin_math_ease_in_back as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_ease_out_back",
+        builtins::builtin_math_ease_out_back as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_ease_in_out_back",
+        builtins::builtin_math_ease_in_out_back as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_ease_in_elastic",
+        builtins::builtin_math_ease_in_elastic as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_ease_out_elastic",
+        builtins::builtin_math_ease_out_elastic as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_ease_in_out_elastic",
+        builtins::builtin_math_ease_in_out_elastic as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_ease_in_bounce",
+        builtins::builtin_math_ease_in_bounce as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_ease_out_bounce",
+        builtins::builtin_math_ease_out_bounce as *const u8,
+    );
+    builder.symbol(
+        "builtin_math_ease_in_out_bounce",
+        builtins::builtin_math_ease_in_out_bounce as *const u8,
     );
 }
 
