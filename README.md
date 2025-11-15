@@ -2,10 +2,11 @@
 
 ## Overview
 
-- Rust implementation of Molang expression runtime with dual engine: Cranelift JIT for pure numeric expressions and an interpreter for statements/loops.
-- Grammar closely mirrors Bedrock’s Molang spec (case-insensitive identifiers, ternaries, `??`, logical ops, namespaces, `loop`, `for_each`, brace blocks).
+- Rust implementation of Molang expression runtime with full JIT compilation via Cranelift - all code is compiled to native machine code.
+- Grammar closely mirrors Bedrock's Molang spec (case-insensitive identifiers, ternaries, `??`, logical ops, namespaces, `loop`, `for_each`, brace blocks).
 - Runtime context exposes `temp.`, `variable.`, `context.` namespaces, supports numbers, strings, arrays, and structured assignments.
 - Builtins include `math.cos/sin/abs/random/random_integer/clamp/sqrt/floor/ceil/round/trunc`.
+- Interactive REPL with multi-line support, command history, and syntax highlighting.
 
 ## Supported Features
 
@@ -14,9 +15,10 @@
 - Namespaces: `t.`, `temp.`, `v.`, `variable.`, `context.`, `query.` with dot-path segments.
 - Statements: brace-delimited blocks, semicolon-separated statements, assignments, `loop(count, expr_or_block)`, `for_each(var, collection, expr_or_block)`, `break`, `continue`, `return`.
 - Struct members are built automatically: assigning `temp.location.z = 3` populates `temp.location` as a nested struct. Array literals support indexing (`temp.values[i]`) and `.length`.
-- Builtins: `math.*` functions listed above callable from both interpreter and JIT paths.
+- Builtins: `math.*` functions JIT-compiled to direct native calls.
 - Query namespace: bind dynamic values with `RuntimeContext::with_query("speed", 2.5)` and read `query.speed` inside Molang.
 - JIT caching: repeated pure expressions re-use compiled code keyed by source string.
+- Control flow: loops, for_each, break, and continue all compiled to native control flow instructions.
 
 ## Unsupported / Not Yet Implemented
 
@@ -28,10 +30,10 @@
 
 ## Behavioral Notes & Limitations
 
-- Programs without statements (single expression, no arrays/strings/flow) go through Cranelift JIT; everything else executes via the interpreter.
+- All code is JIT-compiled to native machine code via Cranelift - there is no interpreter fallback.
+- Pure expressions are cached; programs with statements are compiled on-demand.
 - Random functions use a process-global `SmallRng`; results are non-deterministic between runs but thread-safe.
-- Loop iteration limited to 1024 for safety (matching spec guidance).
-- `??` is implemented as “null-like” check; only `null` counts as missing, unlike Bedrock’s broader definition.
+- `??` is implemented as "null-like" check; only `null` counts as missing, unlike Bedrock's broader definition.
 
 ## Examples
 
@@ -71,9 +73,35 @@ math.clamp(math.random(0, 5), 1, 4) ?? 2
 
 ## Usage
 
+### Interactive REPL
+
+Run without arguments to start the interactive REPL:
+
+```bash
+cargo run --release
+```
+
+Features:
+- Multi-line input with `\` continuation
+- Command history (up/down arrows)
+- Special commands: `:help`, `:vars`, `:clear`, `:exit`
+- Syntax highlighting and colored output
+
+See [REPL_DEMO.md](REPL_DEMO.md) for examples.
+
+### Single Expression
+
+Evaluate a single expression from the command line:
+
+```bash
+cargo run -- "return math.sqrt(16);"
+cargo run -- "temp.x = 5; temp.y = 10; return temp.x + temp.y"
+```
+
+### Running Tests
+
 ```bash
 cargo test
-cargo run -- "return math.sqrt(16);"
 ```
 
 In Rust you can inject query data before evaluation:
