@@ -24,8 +24,8 @@ pub enum MolangError {
     Jit(#[from] jit::JitError),
 }
 
-/// Entry point for host code: lex/parse a Molang snippet, and dispatch either to the
-/// Cranelift JIT (pure expression) or to the interpreter (statements/complex values).
+/// Entry point for host code: lex/parse a Molang snippet and compile to native code via
+/// Cranelift JIT. Pure expressions are cached; programs are compiled on demand.
 pub fn evaluate_expression(input: &str, ctx: &mut RuntimeContext) -> Result<f64, MolangError> {
     let tokens = lexer::lex(input)?;
     let mut parser = parser::Parser::new(&tokens);

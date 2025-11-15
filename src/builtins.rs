@@ -3,7 +3,7 @@ use once_cell::sync::Lazy;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 use std::sync::Mutex;
 
-/// Shared RNG used by all math.random helpers. Mutex guards Cranelift + interpreter threads.
+/// Shared RNG used by all math.random helpers. Mutex guards concurrent JIT-compiled code.
 static RNG: Lazy<Mutex<SmallRng>> = Lazy::new(|| Mutex::new(SmallRng::from_entropy()));
 
 fn with_rng<T>(f: impl FnOnce(&mut SmallRng) -> T) -> T {

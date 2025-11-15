@@ -119,7 +119,7 @@ impl fmt::Display for QualifiedName {
     }
 }
 
-/// Primitive value used by the interpreter.
+/// Primitive value used at runtime by JIT-compiled code.
 #[derive(Debug, Clone)]
 pub enum Value {
     Number(f64),

@@ -7,7 +7,7 @@ pub struct Program {
 }
 
 /// Executable unit of Molang. Complex expressions reduce to statement lists
-/// so the interpreter can model control flow.
+/// so the JIT can compile control flow correctly.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
     /// Expression-only statement (value usually discarded unless it contains a return).
@@ -28,7 +28,7 @@ pub enum Statement {
     Return(Option<Expr>),
 }
 
-/// Expression tree used by both JIT and interpreter.
+/// Expression tree lowered to IR and compiled by the JIT.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Number(f64),
@@ -107,7 +107,7 @@ impl Program {
 
 impl Expr {
     /// Returns true when the expression tree contains control-flow markers that the
-    /// interpreter must honor (e.g., `break`, `continue`).
+    /// JIT must compile correctly (e.g., `break`, `continue`).
     pub fn contains_flow(&self) -> bool {
         match self {
             Expr::Number(_)
@@ -137,7 +137,7 @@ impl Expr {
         }
     }
 
-    /// Determines if the expression can be lowered to IR/JIT without interpreter support.
+    /// Determines if the expression is a pure expression suitable for caching.
     pub fn is_jit_compatible(&self) -> bool {
         match self {
             Expr::Number(_) | Expr::Path(_) => true,

@@ -35,7 +35,7 @@ pub enum IrExpr {
     Flow(ControlFlowExpr),
 }
 
-/// Statement-level IR that will eventually replace the interpreter.
+/// Statement-level IR compiled to native code via the JIT.
 #[derive(Debug, Clone)]
 pub enum IrStatement {
     Assign {
