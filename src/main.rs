@@ -1,7 +1,6 @@
-use colored::*;
 use molang::{eval::RuntimeContext, evaluate_expression};
-use rustyline::error::ReadlineError;
-use rustyline::DefaultEditor;
+use nu_ansi_term::Color;
+use reedline::{DefaultPrompt, DefaultPromptSegment, Reedline, Signal};
 
 fn main() {
     // Check if we're in single-expression mode (command-line argument)
@@ -24,27 +23,39 @@ fn main() {
 }
 
 fn run_repl() {
-    println!("{}", "╔══════════════════════════════════════════════════════════════╗".bright_cyan());
-    println!("{}", "║           Molang Interactive REPL - JIT Compiler            ║".bright_cyan());
-    println!("{}", "╚══════════════════════════════════════════════════════════════╝".bright_cyan());
+    println!("{}", Color::Cyan.bold().paint("╔══════════════════════════════════════════════════════════════╗"));
+    println!("{}", Color::Cyan.bold().paint("║           Molang Interactive REPL - JIT Compiler            ║"));
+    println!("{}", Color::Cyan.bold().paint("╚══════════════════════════════════════════════════════════════╝"));
     println!();
-    println!("{}", "  All expressions are compiled to native code via Cranelift JIT".bright_black());
-    println!("{}", "  Type :help for available commands".bright_black());
+    println!("{}", Color::DarkGray.paint("  All expressions are compiled to native code via Cranelift JIT"));
+    println!("{}", Color::DarkGray.paint("  Type :help for available commands"));
     println!();
 
-    let mut rl = DefaultEditor::new().expect("Failed to create readline editor");
+    let mut line_editor = Reedline::create();
     let mut ctx = RuntimeContext::default();
     let mut multiline_buffer = String::new();
 
+    let default_prompt = DefaultPrompt::new(
+        DefaultPromptSegment::Basic("molang".to_string()),
+        DefaultPromptSegment::Empty,
+    );
+
+    let continuation_prompt = DefaultPrompt::new(
+        DefaultPromptSegment::Basic("     ".to_string()),
+        DefaultPromptSegment::Empty,
+    );
+
     loop {
         let prompt = if multiline_buffer.is_empty() {
-            "molang> ".bright_green().to_string()
+            &default_prompt
         } else {
-            "     -> ".bright_yellow().to_string()
+            &continuation_prompt
         };
 
-        match rl.readline(&prompt) {
-            Ok(line) => {
+        let sig = line_editor.read_line(prompt);
+
+        match sig {
+            Ok(Signal::Success(line)) => {
                 let trimmed = line.trim();
 
                 // Handle special commands (only when not in multiline mode)
@@ -53,14 +64,14 @@ fn run_repl() {
                         ":help" | ":h" => show_help(),
                         ":clear" | ":c" => {
                             ctx = RuntimeContext::default();
-                            println!("{}", "✓ Context cleared".bright_green());
+                            println!("{}", Color::Green.paint("✓ Context cleared"));
                         }
                         ":vars" | ":v" => show_variables(&ctx),
                         ":exit" | ":quit" | ":q" => {
-                            println!("{}", "Goodbye!".bright_cyan());
+                            println!("{}", Color::Cyan.paint("Goodbye!"));
                             break;
                         }
-                        _ => println!("{}", format!("Unknown command: {}", trimmed).bright_red()),
+                        _ => println!("{}", Color::Red.paint(format!("Unknown command: {}", trimmed))),
                     }
                     continue;
                 }
@@ -85,22 +96,21 @@ fn run_repl() {
                 // Evaluate the complete expression
                 let input = multiline_buffer.trim().to_string();
                 if !input.is_empty() {
-                    rl.add_history_entry(&input).ok();
                     evaluate_and_display(&input, &mut ctx);
                 }
 
                 multiline_buffer.clear();
             }
-            Err(ReadlineError::Interrupted) => {
-                println!("{}", "^C (use :exit to quit)".bright_yellow());
+            Ok(Signal::CtrlC) => {
+                println!("{}", Color::Yellow.paint("^C (use :exit to quit)"));
                 multiline_buffer.clear();
             }
-            Err(ReadlineError::Eof) => {
-                println!("{}", "Goodbye!".bright_cyan());
+            Ok(Signal::CtrlD) => {
+                println!("{}", Color::Cyan.paint("Goodbye!"));
                 break;
             }
             Err(err) => {
-                eprintln!("{}", format!("Error: {err}").bright_red());
+                eprintln!("{}", Color::Red.paint(format!("Error: {err}")));
                 break;
             }
         }
@@ -112,54 +122,69 @@ fn evaluate_and_display(input: &str, ctx: &mut RuntimeContext) {
         Ok(value) => {
             // Format the output nicely
             if value.fract() == 0.0 && value.abs() < 1e10 {
-                println!("{} {}", "=>".bright_blue(), format!("{:.0}", value).bright_white().bold());
+                println!(
+                    "{} {}",
+                    Color::Blue.bold().paint("=>"),
+                    Color::White.bold().paint(format!("{:.0}", value))
+                );
             } else {
-                println!("{} {}", "=>".bright_blue(), format!("{}", value).bright_white().bold());
+                println!(
+                    "{} {}",
+                    Color::Blue.bold().paint("=>"),
+                    Color::White.bold().paint(format!("{}", value))
+                );
             }
         }
         Err(err) => {
-            println!("{} {}", "✗".bright_red(), format!("{}", err).bright_red());
+            println!(
+                "{} {}",
+                Color::Red.bold().paint("✗"),
+                Color::Red.paint(format!("{}", err))
+            );
         }
     }
 }
 
 fn show_help() {
     println!();
-    println!("{}", "╔══════════════════════════════════════════════════════════════╗".bright_cyan());
-    println!("{}", "║                      REPL Commands                           ║".bright_cyan());
-    println!("{}", "╚══════════════════════════════════════════════════════════════╝".bright_cyan());
+    println!("{}", Color::Cyan.bold().paint("╔══════════════════════════════════════════════════════════════╗"));
+    println!("{}", Color::Cyan.bold().paint("║                      REPL Commands                           ║"));
+    println!("{}", Color::Cyan.bold().paint("╚══════════════════════════════════════════════════════════════╝"));
     println!();
-    println!("  {}  Show this help message", ":help, :h".bright_green());
-    println!("  {}  Clear the runtime context (all variables)", ":clear, :c".bright_green());
-    println!("  {}  Show all variables in context", ":vars, :v".bright_green());
-    println!("  {}  Exit the REPL", ":exit, :quit, :q".bright_green());
+    println!("  {}  Show this help message", Color::Green.paint(":help, :h"));
+    println!("  {}  Clear the runtime context (all variables)", Color::Green.paint(":clear, :c"));
+    println!("  {}  Show all variables in context", Color::Green.paint(":vars, :v"));
+    println!("  {}  Exit the REPL", Color::Green.paint(":exit, :quit, :q"));
     println!();
-    println!("{}", "╔══════════════════════════════════════════════════════════════╗".bright_cyan());
-    println!("{}", "║                    Molang Features                           ║".bright_cyan());
-    println!("{}", "╚══════════════════════════════════════════════════════════════╝".bright_cyan());
+    println!("{}", Color::Cyan.bold().paint("╔══════════════════════════════════════════════════════════════╗"));
+    println!("{}", Color::Cyan.bold().paint("║                    Molang Features                           ║"));
+    println!("{}", Color::Cyan.bold().paint("╚══════════════════════════════════════════════════════════════╝"));
     println!();
-    println!("  {} Variables and namespaces", "•".bright_yellow());
-    println!("    {}    temp.x = 42; temp.y = temp.x * 2", "Example:".bright_black());
+    println!("  {} Variables and namespaces", Color::Yellow.paint("•"));
+    println!("    {}    temp.x = 42; temp.y = temp.x * 2", Color::DarkGray.paint("Example:"));
     println!();
-    println!("  {} Arrays and indexing", "•".bright_yellow());
-    println!("    {}    temp.arr = [1, 2, 3]; temp.arr[0]", "Example:".bright_black());
-    println!("    {}    temp.arr.length", "Example:".bright_black());
+    println!("  {} Arrays and indexing", Color::Yellow.paint("•"));
+    println!("    {}    temp.arr = [1, 2, 3]; temp.arr[0]", Color::DarkGray.paint("Example:"));
+    println!("    {}    temp.arr.length", Color::DarkGray.paint("Example:"));
     println!();
-    println!("  {} Structs and nested fields", "•".bright_yellow());
-    println!("    {}    temp.player = {{x: 10, y: 20}}; temp.player.x", "Example:".bright_black());
+    println!("  {} Structs and nested fields", Color::Yellow.paint("•"));
+    println!("    {}    temp.player = {{x: 10, y: 20}}; temp.player.x", Color::DarkGray.paint("Example:"));
     println!();
-    println!("  {} Control flow", "•".bright_yellow());
-    println!("    {}    loop(5, {{ temp.i = temp.i + 1; }})", "Example:".bright_black());
-    println!("    {}    for_each(temp.item, temp.arr, {{ ... }})", "Example:".bright_black());
-    println!("    {}    (temp.x > 10) ? break", "Example:".bright_black());
+    println!("  {} Control flow", Color::Yellow.paint("•"));
+    println!("    {}    loop(5, {{ temp.i = temp.i + 1; }})", Color::DarkGray.paint("Example:"));
+    println!("    {}    for_each(temp.item, temp.arr, {{ ... }})", Color::DarkGray.paint("Example:"));
+    println!("    {}    (temp.x > 10) ? break", Color::DarkGray.paint("Example:"));
     println!();
-    println!("  {} Math functions", "•".bright_yellow());
-    println!("    {}    math.cos, math.sin, math.sqrt, math.abs", "Available:".bright_black());
-    println!("    {}    math.floor, math.ceil, math.round, math.trunc", "          ".bright_black());
-    println!("    {}    math.clamp, math.random, math.random_integer", "          ".bright_black());
+    println!("  {} Math functions", Color::Yellow.paint("•"));
+    println!("    {}    math.cos, math.sin, math.sqrt, math.abs", Color::DarkGray.paint("Available:"));
+    println!("    {}    math.floor, math.ceil, math.round, math.trunc", Color::DarkGray.paint("          "));
+    println!("    {}    math.clamp, math.random, math.random_integer", Color::DarkGray.paint("          "));
     println!();
-    println!("  {} Multi-line input", "•".bright_yellow());
-    println!("    {}    End a line with \\ to continue on the next line", "Tip:".bright_black());
+    println!("  {} String comparison", Color::Yellow.paint("•"));
+    println!("    {}    temp.name = 'alice'; temp.name == 'bob'", Color::DarkGray.paint("Example:"));
+    println!();
+    println!("  {} Multi-line input", Color::Yellow.paint("•"));
+    println!("    {}    End a line with \\ to continue on the next line", Color::DarkGray.paint("Tip:"));
     println!();
 }
 
@@ -167,38 +192,36 @@ fn show_variables(ctx: &RuntimeContext) {
     let vars = ctx.list_variables();
 
     if vars.is_empty() {
-        println!("{}", "  No variables in context".bright_black());
+        println!("{}", Color::DarkGray.paint("  No variables in context"));
         return;
     }
 
     println!();
-    println!("{}", "╔══════════════════════════════════════════════════════════════╗".bright_cyan());
-    println!("{}", "║                    Context Variables                         ║".bright_cyan());
-    println!("{}", "╚══════════════════════════════════════════════════════════════╝".bright_cyan());
+    println!("{}", Color::Cyan.bold().paint("╔══════════════════════════════════════════════════════════════╗"));
+    println!("{}", Color::Cyan.bold().paint("║                    Context Variables                         ║"));
+    println!("{}", Color::Cyan.bold().paint("╚══════════════════════════════════════════════════════════════╝"));
     println!();
 
     for (name, value) in vars {
         let value_str = match value {
             molang::eval::Value::Number(n) => {
                 if n.fract() == 0.0 && n.abs() < 1e10 {
-                    format!("{:.0}", n).bright_white().to_string()
+                    Color::White.paint(format!("{:.0}", n)).to_string()
                 } else {
-                    format!("{}", n).bright_white().to_string()
+                    Color::White.paint(format!("{}", n)).to_string()
                 }
             }
-            molang::eval::Value::String(s) => format!("\"{}\"", s).bright_green().to_string(),
+            molang::eval::Value::String(s) => Color::Green.paint(format!("\"{}\"", s)).to_string(),
             molang::eval::Value::Array(arr) => {
-                format!("[{} items]", arr.len()).bright_yellow().to_string()
+                Color::Yellow.paint(format!("[{} items]", arr.len())).to_string()
             }
             molang::eval::Value::Struct(map) => {
-                format!("{{{}  fields}}", map.len()).bright_magenta().to_string()
+                Color::Magenta.paint(format!("{{{}  fields}}", map.len())).to_string()
             }
-            molang::eval::Value::Null => {
-                "null".bright_black().to_string()
-            }
+            molang::eval::Value::Null => Color::DarkGray.paint("null").to_string(),
         };
 
-        println!("  {} = {}", name.bright_blue(), value_str);
+        println!("  {} = {}", Color::Blue.paint(name), value_str);
     }
     println!();
 }
