@@ -484,6 +484,104 @@ mod tests {
     }
 
     #[test]
+    fn string_comparison_equal() {
+        // String literals comparison
+        let result = eval("return 'hello' == 'hello';");
+        assert!((result - 1.0).abs() < 1e-9);
+
+        let result = eval("return 'hello' == 'world';");
+        assert!((result - 0.0).abs() < 1e-9);
+
+        // String variable comparison
+        let result = eval("temp.name = 'alice'; return temp.name == 'alice';");
+        assert!((result - 1.0).abs() < 1e-9);
+
+        let result = eval("temp.name = 'alice'; return temp.name == 'bob';");
+        assert!((result - 0.0).abs() < 1e-9);
+
+        // Two string variables
+        let result = eval("temp.a = 'test'; temp.b = 'test'; return temp.a == temp.b;");
+        assert!((result - 1.0).abs() < 1e-9);
+
+        let result = eval("temp.a = 'foo'; temp.b = 'bar'; return temp.a == temp.b;");
+        assert!((result - 0.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn string_comparison_not_equal() {
+        // String literals comparison
+        let result = eval("return 'hello' != 'world';");
+        assert!((result - 1.0).abs() < 1e-9);
+
+        let result = eval("return 'hello' != 'hello';");
+        assert!((result - 0.0).abs() < 1e-9);
+
+        // String variable comparison
+        let result = eval("temp.name = 'alice'; return temp.name != 'bob';");
+        assert!((result - 1.0).abs() < 1e-9);
+
+        let result = eval("temp.name = 'alice'; return temp.name != 'alice';");
+        assert!((result - 0.0).abs() < 1e-9);
+
+        // Two string variables
+        let result = eval("temp.a = 'foo'; temp.b = 'bar'; return temp.a != temp.b;");
+        assert!((result - 1.0).abs() < 1e-9);
+
+        let result = eval("temp.a = 'test'; temp.b = 'test'; return temp.a != temp.b;");
+        assert!((result - 0.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn string_comparison_mixed_types() {
+        // String compared with number should return false
+        let result = eval("temp.name = 'alice'; temp.age = 25; return temp.name == temp.age;");
+        assert!((result - 0.0).abs() < 1e-9);
+
+        // String compared with null
+        let result = eval("temp.name = 'alice'; return temp.name == temp.missing;");
+        assert!((result - 0.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn string_comparison_in_conditionals() {
+        // Using string comparison in ternary
+        let result = eval(
+            "temp.role = 'admin'; return temp.role == 'admin' ? 1.0 : 0.0;"
+        );
+        assert!((result - 1.0).abs() < 1e-9);
+
+        // Using in loops with conditional
+        let result = eval(
+            "
+            temp.found = 0;
+            temp.names = ['alice', 'bob', 'charlie'];
+            for_each(temp.name, temp.names, {
+                temp.found = temp.found + (temp.name == 'bob' ? 1 : 0);
+            });
+            return temp.found;
+            "
+        );
+        assert!((result - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn number_comparison_still_works() {
+        // Ensure numeric comparison still works
+        let result = eval("temp.a = 5; temp.b = 5; return temp.a == temp.b;");
+        assert!((result - 1.0).abs() < 1e-9);
+
+        let result = eval("temp.a = 5; temp.b = 10; return temp.a != temp.b;");
+        assert!((result - 1.0).abs() < 1e-9);
+
+        // Numeric literals
+        let result = eval("return 42 == 42;");
+        assert!((result - 1.0).abs() < 1e-9);
+
+        let result = eval("return 42 != 43;");
+        assert!((result - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
     fn all_easing_functions_preserve_boundaries() {
         // All easing functions should map 0 to start and 1 to end
         let functions = vec![

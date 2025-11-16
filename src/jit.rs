@@ -470,8 +470,8 @@ impl<'a, 'b> Translator<'a, 'b> {
                 BinaryOp::GreaterEqual => {
                     self.emit_comparison(FloatCC::GreaterThanOrEqual, left, right)
                 }
-                BinaryOp::Equal => self.emit_comparison(FloatCC::Equal, left, right),
-                BinaryOp::NotEqual => self.emit_comparison(FloatCC::NotEqual, left, right),
+                BinaryOp::Equal => self.emit_value_equality(left, right, true),
+                BinaryOp::NotEqual => self.emit_value_equality(left, right, false),
                 BinaryOp::And => self.emit_logical_and(left, right),
                 BinaryOp::Or => self.emit_logical_or(left, right),
                 BinaryOp::NullCoalesce => self.emit_null_coalesce(left, right),
@@ -828,6 +828,99 @@ impl<'a, 'b> Translator<'a, 'b> {
         let (left_val, right_val) = self.translate_pair(left, right)?;
         let cmp = self.builder.ins().fcmp(cond, left_val, right_val);
         Ok(self.float_from_bool(cmp))
+    }
+
+    fn emit_value_equality(
+        &mut self,
+        left: &IrExpr,
+        right: &IrExpr,
+        is_equal: bool,
+    ) -> Result<Value, JitError> {
+        // Check what we're comparing
+        match (left, right) {
+            // Path == Path: use runtime helper
+            (IrExpr::Path(left_parts), IrExpr::Path(right_parts)) => {
+                let left_slot = self.ensure_slot_from_parts(left_parts);
+                let (left_ptr, left_len) = self.slot_pointer_components(left_slot);
+                let right_slot = self.ensure_slot_from_parts(right_parts);
+                let (right_ptr, right_len) = self.slot_pointer_components(right_slot);
+
+                let func_id = if is_equal {
+                    self.runtime_helpers.equal_paths
+                } else {
+                    self.runtime_helpers.not_equal_paths
+                };
+
+                let func_ref = self
+                    .module
+                    .declare_func_in_func(func_id, self.builder.func);
+
+                let result = self.builder.ins().call(
+                    func_ref,
+                    &[self.runtime_ptr, left_ptr, left_len, right_ptr, right_len],
+                );
+                Ok(self.builder.inst_results(result)[0])
+            }
+            // Path == String: use path_string helper
+            (IrExpr::Path(path_parts), IrExpr::String(text))
+            | (IrExpr::String(text), IrExpr::Path(path_parts)) => {
+                let path_slot = self.ensure_slot_from_parts(path_parts);
+                let (path_ptr, path_len) = self.slot_pointer_components(path_slot);
+
+                // Create global data for the string literal
+                let string_bytes = text.as_bytes();
+                let string_len = string_bytes.len();
+                let data_id = self
+                    .module
+                    .declare_anonymous_data(false, false)
+                    .map_err(cranelift_module::ModuleError::from)?;
+                let mut data_desc = cranelift_module::DataDescription::new();
+                data_desc.define(string_bytes.to_vec().into_boxed_slice());
+                self.module
+                    .define_data(data_id, &data_desc)
+                    .map_err(cranelift_module::ModuleError::from)?;
+
+                let global_value = self
+                    .module
+                    .declare_data_in_func(data_id, self.builder.func);
+                let str_ptr = self.builder.ins().global_value(self.pointer_type, global_value);
+                let str_len = self.builder.ins().iconst(self.pointer_type, string_len as i64);
+
+                let func_id = if is_equal {
+                    self.runtime_helpers.equal_path_string
+                } else {
+                    self.runtime_helpers.not_equal_path_string
+                };
+
+                let func_ref = self
+                    .module
+                    .declare_func_in_func(func_id, self.builder.func);
+
+                let result = self.builder.ins().call(
+                    func_ref,
+                    &[self.runtime_ptr, path_ptr, path_len, str_ptr, str_len],
+                );
+                Ok(self.builder.inst_results(result)[0])
+            }
+            // String == String: compile-time comparison
+            (IrExpr::String(left_str), IrExpr::String(right_str)) => {
+                let result = if is_equal {
+                    if left_str == right_str { 1.0 } else { 0.0 }
+                } else {
+                    if left_str != right_str { 1.0 } else { 0.0 }
+                };
+                Ok(self.const_f64(result))
+            }
+            // Numeric or other: fall back to float comparison
+            _ => {
+                let cond = if is_equal {
+                    FloatCC::Equal
+                } else {
+                    FloatCC::NotEqual
+                };
+                self.emit_comparison(cond, left, right)
+            }
+        }
     }
 
     fn emit_logical_and(&mut self, left: &IrExpr, right: &IrExpr) -> Result<Value, JitError> {
@@ -1265,6 +1358,22 @@ fn register_runtime_symbols(builder: &mut JITBuilder) {
         molang_rt_array_copy_element as *const u8,
     );
     builder.symbol("molang_rt_set_string", molang_rt_set_string as *const u8);
+    builder.symbol(
+        "molang_rt_equal_paths",
+        molang_rt_equal_paths as *const u8,
+    );
+    builder.symbol(
+        "molang_rt_not_equal_paths",
+        molang_rt_not_equal_paths as *const u8,
+    );
+    builder.symbol(
+        "molang_rt_equal_path_string",
+        molang_rt_equal_path_string as *const u8,
+    );
+    builder.symbol(
+        "molang_rt_not_equal_path_string",
+        molang_rt_not_equal_path_string as *const u8,
+    );
 }
 
 #[derive(Clone, Copy)]
@@ -1279,6 +1388,10 @@ struct RuntimeHelpers {
     array_length: FuncId,
     array_copy_element: FuncId,
     set_string: FuncId,
+    equal_paths: FuncId,
+    not_equal_paths: FuncId,
+    equal_path_string: FuncId,
+    not_equal_path_string: FuncId,
 }
 
 impl RuntimeHelpers {
@@ -1380,6 +1493,34 @@ impl RuntimeHelpers {
         let set_string =
             module.declare_function("molang_rt_set_string", Linkage::Import, &set_string_sig)?;
 
+        let mut equal_paths_sig = module.make_signature();
+        equal_paths_sig.params.push(AbiParam::new(pointer_type));
+        equal_paths_sig.params.push(AbiParam::new(pointer_type));
+        equal_paths_sig.params.push(AbiParam::new(pointer_type));
+        equal_paths_sig.params.push(AbiParam::new(pointer_type));
+        equal_paths_sig.params.push(AbiParam::new(pointer_type));
+        equal_paths_sig.returns.push(AbiParam::new(types::F64));
+        let equal_paths =
+            module.declare_function("molang_rt_equal_paths", Linkage::Import, &equal_paths_sig)?;
+
+        let not_equal_paths = module.declare_function(
+            "molang_rt_not_equal_paths",
+            Linkage::Import,
+            &equal_paths_sig,
+        )?;
+
+        let equal_path_string = module.declare_function(
+            "molang_rt_equal_path_string",
+            Linkage::Import,
+            &equal_paths_sig,
+        )?;
+
+        let not_equal_path_string = module.declare_function(
+            "molang_rt_not_equal_path_string",
+            Linkage::Import,
+            &equal_paths_sig,
+        )?;
+
         Ok(RuntimeHelpers {
             get_number,
             set_number,
@@ -1391,6 +1532,10 @@ impl RuntimeHelpers {
             array_length,
             array_copy_element,
             set_string,
+            equal_paths,
+            not_equal_paths,
+            equal_path_string,
+            not_equal_path_string,
         })
     }
 }
@@ -1571,6 +1716,95 @@ pub extern "C" fn molang_rt_set_string(
     if let (Ok(name), Ok(value)) = (str::from_utf8(name_bytes), str::from_utf8(value_bytes)) {
         let runtime = unsafe { &mut *ctx };
         runtime.set_value_canonical(name, RuntimeValue::string(value));
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn molang_rt_equal_paths(
+    ctx: *mut RuntimeContext,
+    left_ptr: *const u8,
+    left_len: usize,
+    right_ptr: *const u8,
+    right_len: usize,
+) -> f64 {
+    if ctx.is_null() || left_ptr.is_null() || right_ptr.is_null() {
+        return 0.0;
+    }
+    let left_bytes = unsafe { slice::from_raw_parts(left_ptr, left_len) };
+    let right_bytes = unsafe { slice::from_raw_parts(right_ptr, right_len) };
+    if let (Ok(left_name), Ok(right_name)) = (str::from_utf8(left_bytes), str::from_utf8(right_bytes))
+    {
+        let runtime = unsafe { &*ctx };
+        let left_val = runtime.get_value_canonical(left_name);
+        let right_val = runtime.get_value_canonical(right_name);
+
+        match (left_val, right_val) {
+            (Some(RuntimeValue::String(l)), Some(RuntimeValue::String(r))) => {
+                if l == r { 1.0 } else { 0.0 }
+            }
+            (Some(RuntimeValue::Number(l)), Some(RuntimeValue::Number(r))) => {
+                if l == r { 1.0 } else { 0.0 }
+            }
+            (None, None) => 1.0,
+            _ => 0.0,
+        }
+    } else {
+        0.0
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn molang_rt_not_equal_paths(
+    ctx: *mut RuntimeContext,
+    left_ptr: *const u8,
+    left_len: usize,
+    right_ptr: *const u8,
+    right_len: usize,
+) -> f64 {
+    if molang_rt_equal_paths(ctx, left_ptr, left_len, right_ptr, right_len) == 1.0 {
+        0.0
+    } else {
+        1.0
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn molang_rt_equal_path_string(
+    ctx: *mut RuntimeContext,
+    path_ptr: *const u8,
+    path_len: usize,
+    str_ptr: *const u8,
+    str_len: usize,
+) -> f64 {
+    if ctx.is_null() || path_ptr.is_null() || str_ptr.is_null() {
+        return 0.0;
+    }
+    let path_bytes = unsafe { slice::from_raw_parts(path_ptr, path_len) };
+    let str_bytes = unsafe { slice::from_raw_parts(str_ptr, str_len) };
+    if let (Ok(path_name), Ok(str_val)) = (str::from_utf8(path_bytes), str::from_utf8(str_bytes)) {
+        let runtime = unsafe { &*ctx };
+        if let Some(RuntimeValue::String(s)) = runtime.get_value_canonical(path_name) {
+            if s == str_val { 1.0 } else { 0.0 }
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn molang_rt_not_equal_path_string(
+    ctx: *mut RuntimeContext,
+    path_ptr: *const u8,
+    path_len: usize,
+    str_ptr: *const u8,
+    str_len: usize,
+) -> f64 {
+    if molang_rt_equal_path_string(ctx, path_ptr, path_len, str_ptr, str_len) == 1.0 {
+        0.0
+    } else {
+        1.0
     }
 }
 
