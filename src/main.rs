@@ -1,6 +1,6 @@
-use molang::{eval::RuntimeContext, evaluate_expression};
-use nu_ansi_term::Color;
-use reedline::{DefaultPrompt, DefaultPromptSegment, Reedline, Signal};
+use molang::{eval::RuntimeContext, evaluate_expression, lexer::{lex, TokenKind}};
+use nu_ansi_term::{Color, Style};
+use reedline::{DefaultPrompt, DefaultPromptSegment, Highlighter, Reedline, Signal, StyledText};
 
 fn main() {
     // Check if we're in single-expression mode (command-line argument)
@@ -22,16 +22,123 @@ fn main() {
     run_repl();
 }
 
+struct MolangHighlighter;
+
+impl Highlighter for MolangHighlighter {
+    fn highlight(&self, line: &str, _cursor: usize) -> StyledText {
+        let mut styled = StyledText::new();
+
+        // Handle empty line
+        if line.is_empty() {
+            return styled;
+        }
+
+        // Try to tokenize the line
+        match lex(line) {
+            Ok(tokens) => {
+                let mut last_end = 0;
+
+                for token in tokens {
+                    // Skip EOF token
+                    if matches!(token.kind, TokenKind::EOF) {
+                        continue;
+                    }
+
+                    // Add any whitespace/text before this token as unstyled
+                    if token.span.start > last_end {
+                        styled.push((
+                            Style::new(),
+                            line[last_end..token.span.start].to_string(),
+                        ));
+                    }
+
+                    // Bounds check
+                    if token.span.end >= line.len() {
+                        continue;
+                    }
+
+                    // Get the token text
+                    let token_text = &line[token.span.start..=token.span.end];
+
+                    // Apply color based on token kind
+                    let style = match token.kind {
+                        // Keywords and control flow
+                        TokenKind::Identifier(ref name) if is_keyword(name) => {
+                            Style::new().fg(Color::Magenta).bold()
+                        }
+                        // Math functions
+                        TokenKind::Identifier(ref name) if name.starts_with("math.") => {
+                            Style::new().fg(Color::Blue)
+                        }
+                        // Identifiers (variables, paths)
+                        TokenKind::Identifier(_) => Style::new().fg(Color::Cyan),
+                        // Numbers
+                        TokenKind::Number(_) => Style::new().fg(Color::Yellow),
+                        // Strings
+                        TokenKind::String(_) => Style::new().fg(Color::Green),
+                        // Operators
+                        TokenKind::Plus | TokenKind::Minus | TokenKind::Star | TokenKind::Slash |
+                        TokenKind::EqualEqual | TokenKind::BangEqual |
+                        TokenKind::Less | TokenKind::LessEqual |
+                        TokenKind::Greater | TokenKind::GreaterEqual |
+                        TokenKind::AndAnd | TokenKind::OrOr | TokenKind::Bang |
+                        TokenKind::Question | TokenKind::QuestionQuestion => {
+                            Style::new().fg(Color::Red)
+                        }
+                        // Assignment
+                        TokenKind::Equal => Style::new().fg(Color::Red).bold(),
+                        // Punctuation
+                        TokenKind::LParen | TokenKind::RParen |
+                        TokenKind::LBrace | TokenKind::RBrace |
+                        TokenKind::LBracket | TokenKind::RBracket |
+                        TokenKind::Comma | TokenKind::Semicolon | TokenKind::Colon => {
+                            Style::new().fg(Color::White)
+                        }
+                        // Dot for member access
+                        TokenKind::Dot => Style::new().fg(Color::White),
+                        // Arrow (not fully supported but highlight anyway)
+                        TokenKind::Arrow => Style::new().fg(Color::Purple),
+                        // EOF
+                        TokenKind::EOF => Style::new(),
+                    };
+
+                    styled.push((style, token_text.to_string()));
+                    last_end = token.span.end + 1;
+                }
+
+                // Add any remaining text
+                if last_end < line.len() {
+                    styled.push((Style::new(), line[last_end..].to_string()));
+                }
+            }
+            Err(_) => {
+                // If tokenization fails, just show the line without highlighting
+                styled.push((Style::new(), line.to_string()));
+            }
+        }
+
+        styled
+    }
+}
+
+fn is_keyword(name: &str) -> bool {
+    matches!(
+        name.to_lowercase().as_str(),
+        "return" | "loop" | "for_each" | "break" | "continue" |
+        "temp" | "t" | "variable" | "v" | "context" | "c" | "query" | "q"
+    )
+}
+
 fn run_repl() {
     println!("{}", Color::Cyan.bold().paint("╔══════════════════════════════════════════════════════════════╗"));
-    println!("{}", Color::Cyan.bold().paint("║           Molang Interactive REPL - JIT Compiler            ║"));
+    println!("{}", Color::Cyan.bold().paint("║          Molang Interactive REPL - JIT Compiler              ║"));
     println!("{}", Color::Cyan.bold().paint("╚══════════════════════════════════════════════════════════════╝"));
     println!();
     println!("{}", Color::DarkGray.paint("  All expressions are compiled to native code via Cranelift JIT"));
     println!("{}", Color::DarkGray.paint("  Type :help for available commands"));
     println!();
 
-    let mut line_editor = Reedline::create();
+    let mut line_editor = Reedline::create().with_highlighter(Box::new(MolangHighlighter));
     let mut ctx = RuntimeContext::default();
     let mut multiline_buffer = String::new();
 
